@@ -1,0 +1,179 @@
+<h1>Part 6: Production GenAI</h1>
+<h2 id="61-the-5-production-pillars"><a class="anchor" href="#61-the-5-production-pillars" aria-label="Link to section">#</a>6.1 The 5 Production Pillars</h2>
+<h3 id="pillar-1-observability"><a class="anchor" href="#pillar-1-observability" aria-label="Link to section">#</a>Pillar 1: Observability</h3>
+<ul>
+<li><strong>LangSmith</strong> (LangChain official) — traces, costs, eval</li>
+<li><strong>Langfuse</strong> (OSS) — GDPR-compliant, OpenTelemetry</li>
+<li><strong>Arize Phoenix</strong> (OSS) — drift detection, embedding analysis</li>
+</ul>
+<p>What to log: prompt, response, tool calls, latency, tokens, cost, user feedback.</p>
+<pre><code class="language-python">from langsmith import traceable
+
+@traceable(name=&quot;rag_query&quot;, tags=[&quot;production&quot;])
+def rag_pipeline(question: str) -&gt; str:
+    docs = retriever.get_relevant_documents(question)
+    return llm.invoke(f&quot;Context: {docs}\nQ: {question}&quot;)
+</code></pre>
+<h3 id="pillar-2-evaluation"><a class="anchor" href="#pillar-2-evaluation" aria-label="Link to section">#</a>Pillar 2: Evaluation</h3>
+<ul>
+<li><strong>RAGAS metrics</strong>:<ul>
+<li><strong>Faithfulness</strong> — is the answer supported by context?</li>
+<li><strong>Answer Relevancy</strong> — does it answer the question?</li>
+<li><strong>Context Precision</strong> — are retrieved chunks relevant?</li>
+<li><strong>Context Recall</strong> — did we retrieve all needed info?</li>
+</ul>
+</li>
+<li><strong>LLM-as-judge</strong>: GPT-4 rates outputs on your custom criteria</li>
+<li><strong>Golden dataset</strong>: 50-100 query-context-answer triples</li>
+<li><strong>Run on every PR</strong> (CI/CD gate)</li>
+</ul>
+<pre><code class="language-python">from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy, context_precision
+
+result = evaluate(
+    dataset,
+    metrics=[faithfulness, answer_relevancy, context_precision]
+)
+</code></pre>
+<h3 id="pillar-3-prompt-versioning"><a class="anchor" href="#pillar-3-prompt-versioning" aria-label="Link to section">#</a>Pillar 3: Prompt Versioning</h3>
+<ul>
+<li>LangSmith Prompt Hub (built-in, semver)</li>
+<li>Never edit prompts in code — always version + deploy</li>
+<li>A/B test before full rollout</li>
+</ul>
+<h3 id="pillar-4-cost-optimization-10-levers"><a class="anchor" href="#pillar-4-cost-optimization-10-levers" aria-label="Link to section">#</a>Pillar 4: Cost Optimization (10 Levers)</h3>
+<table>
+<thead>
+<tr>
+<th>Lever</th>
+<th>Saves</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>1. Model cascading</strong> (cheap for simple, expensive for complex)</td>
+<td>50-70%</td>
+</tr>
+<tr>
+<td><strong>2. Semantic caching</strong> (Redis + embeddings, threshold 0.95)</td>
+<td>30-60%</td>
+</tr>
+<tr>
+<td><strong>3. Prompt caching</strong> (Anthropic, 90% off cached prefixes)</td>
+<td>50-90%</td>
+</tr>
+<tr>
+<td><strong>4. Token reduction</strong> (shorter prompts, summarize history)</td>
+<td>20-50%</td>
+</tr>
+<tr>
+<td><strong>5. Smaller embeddings</strong> (text-embedding-3-small, Matryoshka)</td>
+<td>50%</td>
+</tr>
+<tr>
+<td><strong>6. Batch processing</strong> (OpenAI Batch API, 50% off)</td>
+<td>30%</td>
+</tr>
+<tr>
+<td><strong>7. Fine-tune small model</strong> (replace big model with fine-tuned mini)</td>
+<td>70%+</td>
+</tr>
+<tr>
+<td><strong>8. Aggressive rate limiting</strong> (per-user caps)</td>
+<td>20%</td>
+</tr>
+<tr>
+<td><strong>9. Compression &amp; deduplication</strong></td>
+<td>10-20%</td>
+</tr>
+<tr>
+<td><strong>10. Reserved capacity</strong> (Azure reserved instances)</td>
+<td>20-40%</td>
+</tr>
+</tbody></table>
+<p><strong>Combined realistic savings: 80%</strong> (e.g., $100k → $20k)</p>
+<h3 id="pillar-5-guardrails"><a class="anchor" href="#pillar-5-guardrails" aria-label="Link to section">#</a>Pillar 5: Guardrails</h3>
+<ul>
+<li><strong>Input</strong>: PII detection (Presidio), prompt injection detection, topic restriction</li>
+<li><strong>Output</strong>: Azure Content Safety, hallucination check (LLM-as-judge), format validation</li>
+</ul>
+<hr>
+<h2 id="62-cost-calculation-formula"><a class="anchor" href="#62-cost-calculation-formula" aria-label="Link to section">#</a>6.2 Cost Calculation Formula</h2>
+<pre><code>Monthly Cost = (req/day × 30) × avg_tokens × $/1M
+
+Example:
+  10k req/day × 700 input tokens × $5/1M = $1,050/month (input, GPT-4o)
++ 10k × 200 output × $15/1M = $900/month (output)
+= ~$1,950/month for GPT-4o
+
+vs GPT-4o-mini:
+  10k × 700 × $0.15/1M = $31.50/month (input)
++ 10k × 200 × $0.60/1M = $36/month (output)
+= $67.50/month (29x cheaper!)
+</code></pre>
+<hr>
+<h2 id="63-latency-optimization"><a class="anchor" href="#63-latency-optimization" aria-label="Link to section">#</a>6.3 Latency Optimization</h2>
+<h3 id="the-500ms-challenge"><a class="anchor" href="#the-500ms-challenge" aria-label="Link to section">#</a>The 500ms Challenge</h3>
+<pre><code>User expects: &lt; 500ms total perceived latency
+LLM takes: ~2s for full response
+
+Solution: Streaming!
+- TTFT (Time to First Token): 200ms
+- User sees response start immediately
+- Total perceived: 200-300ms (UX magic)
+</code></pre>
+<h3 id="ttft-optimization"><a class="anchor" href="#ttft-optimization" aria-label="Link to section">#</a>TTFT Optimization</h3>
+<ol>
+<li>Geographic proximity (deploy in user&#39;s region)</li>
+<li>Smaller model (GPT-4o-mini is 3x faster than GPT-4o)</li>
+<li>Connection pooling</li>
+<li>Edge deployment (smaller models at edge)</li>
+<li>Prompt caching (warm cache = faster first token)</li>
+<li>Streaming from start</li>
+</ol>
+<h3 id="multi-step-agent-latency"><a class="anchor" href="#multi-step-agent-latency" aria-label="Link to section">#</a>Multi-Step Agent Latency</h3>
+<ul>
+<li>Speculative execution (start LLM call during retrieval)</li>
+<li>Parallel tool calls (<code>asyncio.gather</code>)</li>
+<li>Aggressive early stopping</li>
+<li>Cache intermediate results</li>
+</ul>
+<hr>
+<h2 id="64-security-owasp-llm-top-10"><a class="anchor" href="#64-security-owasp-llm-top-10" aria-label="Link to section">#</a>6.4 Security: OWASP LLM Top 10</h2>
+<h3 id="the-critical-threats"><a class="anchor" href="#the-critical-threats" aria-label="Link to section">#</a>The Critical Threats</h3>
+<ol>
+<li><strong>LLM01: Prompt Injection</strong> — attacker overrides system prompt</li>
+<li><strong>LLM02: Insecure Output Handling</strong> — LLM output executed unsafely (XSS, SQL injection)</li>
+<li><strong>LLM03: Training Data Poisoning</strong> — malicious data in fine-tuning</li>
+<li><strong>LLM04: Model DoS</strong> — expensive queries drain budget</li>
+<li><strong>LLM05: Supply Chain</strong> — compromised models, packages</li>
+<li><strong>LLM06: Sensitive Info Disclosure</strong> — PII leaks</li>
+<li><strong>LLM07: Insecure Plugin Design</strong> — tool use exploits</li>
+<li><strong>LLM08: Excessive Agency</strong> — agent acts beyond scope</li>
+<li><strong>LLM09: Overreliance</strong> — humans trust bad outputs</li>
+<li><strong>LLM10: Model Theft</strong> — weights extracted</li>
+</ol>
+<h3 id="defense-in-depth"><a class="anchor" href="#defense-in-depth" aria-label="Link to section">#</a>Defense in Depth</h3>
+<pre><code>┌──────────────────────────────────────────────────┐
+│ Layer 1: Input validation                        │
+│   - PII detection (Presidio)                     │
+│   - Prompt injection detection                   │
+│   - Length limits                                │
+│   - Content filters                              │
+├──────────────────────────────────────────────────┤
+│ Layer 2: System prompt hardening                │
+│   - Clear role definition                        │
+│   - Explicit refusal rules                       │
+│   - Sandboxed tool descriptions                  │
+├──────────────────────────────────────────────────┤
+│ Layer 3: Output validation                       │
+│   - Format/schema check                          │
+│   - PII redaction on output                      │
+│   - Hallucination check (LLM-as-judge)           │
+├──────────────────────────────────────────────────┤
+│ Layer 4: Audit logging                           │
+│   - Every prompt, response, tool call            │
+│   - User feedback capture                        │
+│   - Anomaly detection                            │
+└──────────────────────────────────────────────────┘
+</code></pre>
+<hr>

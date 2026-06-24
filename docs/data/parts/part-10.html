@@ -1,0 +1,1568 @@
+<h1>Part 10: Specialized Topics from JDs (Agents, MCP, Memory, Evals, Distributed Training, Healthcare AI)</h1>
+<p>This part covers the specialized topics that frequently appear in modern GenAI / Applied AI job descriptions — agent reliability, MCP servers at scale, memory/context engineering, evals infrastructure, observability stacks, and (for research/data roles) distributed training and synthetic data generation.</p>
+<hr>
+<h2 id="101-agent-reliability-production-operations"><a class="anchor" href="#101-agent-reliability-production-operations" aria-label="Link to section">#</a>10.1 Agent Reliability &amp; Production Operations</h2>
+<h3 id="the-5-failure-modes-every-agent-engineer-must-know"><a class="anchor" href="#the-5-failure-modes-every-agent-engineer-must-know" aria-label="Link to section">#</a>The 5 Failure Modes Every Agent Engineer Must Know</h3>
+<ol>
+<li><strong>Runaway loops</strong> — agent calls the same tool 50+ times</li>
+<li><strong>Stuck on error</strong> — tool throws, agent doesn&#39;t recover</li>
+<li><strong>Hallucinated state</strong> — agent thinks it succeeded when it didn&#39;t</li>
+<li><strong>Budget blowout</strong> — agent burns $50 in API calls to do a $0.01 task</li>
+<li><strong>Silent regression</strong> — prompt change breaks 5% of workflows, no alert</li>
+</ol>
+<h3 id="defenses-in-order-of-importance"><a class="anchor" href="#defenses-in-order-of-importance" aria-label="Link to section">#</a>Defenses (In Order of Importance)</h3>
+<pre><code class="language-python"># 1. Hard iteration cap
+agent_executor = AgentExecutor(
+    agent=agent, tools=tools,
+    max_iterations=5,                # HARD STOP
+    max_execution_time=30,           # 30 seconds total
+    early_stopping_method=&quot;force&quot;    # if loop detected
+)
+
+# 2. Per-session cost cap
+@tool
+def expensive_api_call(args):
+    if user_session[&quot;total_cost&quot;] &gt; 1.00:  # $1 cap
+        raise CostLimitExceeded()
+    return api_call(args)
+
+# 3. Reflection prompt — force self-check
+SYSTEM_PROMPT = &quot;&quot;&quot;After each tool call, ask yourself:
+&#39;Did this give me what I need? If yes, proceed.
+If no, do I have a different tool? If not, admit you don&#39;t know.
+NEVER call the same tool twice with the same arguments.&quot;&quot;&quot;
+</code></pre>
+<h3 id="incident-response-playbook-when-agents-break-in-production"><a class="anchor" href="#incident-response-playbook-when-agents-break-in-production" aria-label="Link to section">#</a>Incident Response Playbook (When Agents Break in Production)</h3>
+<pre><code>0-5 min:   Triage — check LangSmith/Signoz traces
+           Identify: which agent, which tool, error rate spike
+5-15 min:  Mitigate — disable affected feature flag,
+           route to fallback (cached response, simpler agent)
+15-60 min: Communicate — status page, customer support
+60-min+:   Root cause — read traces, identify failure pattern
+Postmortem: Write blameless RCA, add regression test,
+            update runbook, add alert for this class of bug
+</code></pre>
+<h3 id="scheduled-triggers-long-running-execution"><a class="anchor" href="#scheduled-triggers-long-running-execution" aria-label="Link to section">#</a>Scheduled Triggers &amp; Long-Running Execution</h3>
+<pre><code class="language-python"># APScheduler / Celery beat / cloud cron
+@scheduler.scheduled_job(&#39;interval&#39;, minutes=15)
+def scheduled_agent_run():
+    &quot;&quot;&quot;Run an agent every 15 minutes.&quot;&quot;&quot;
+    for tenant in active_tenants:
+        result = app.invoke(
+            {&quot;messages&quot;: [(&quot;user&quot;, &quot;Check for new issues&quot;)]},
+            config={&quot;configurable&quot;: {&quot;thread_id&quot;: f&quot;cron-{tenant.id}&quot;}}
+        )
+        if result[&quot;action_required&quot;]:
+            notify(tenant, result)
+
+# Resume after crash
+config = {&quot;configurable&quot;: {&quot;thread_id&quot;: &quot;long-task-123&quot;}}
+# First call may pause, crash, restart
+# Next call picks up from checkpoint
+result = app.invoke(input, config)
+</code></pre>
+<hr>
+<h2 id="102-mcp-model-context-protocol-at-scale"><a class="anchor" href="#102-mcp-model-context-protocol-at-scale" aria-label="Link to section">#</a>10.2 MCP (Model Context Protocol) at Scale</h2>
+<h3 id="what-is-mcp-production-view"><a class="anchor" href="#what-is-mcp-production-view" aria-label="Link to section">#</a>What is MCP? (Production View)</h3>
+<p>An open protocol (Anthropic, late 2024) where a <strong>server</strong> exposes three primitives to any <strong>client</strong>:</p>
+<ul>
+<li><strong>Tools</strong> — functions the LLM can call</li>
+<li><strong>Resources</strong> — data the LLM can read (files, DB rows)</li>
+<li><strong>Prompts</strong> — pre-built prompt templates</li>
+</ul>
+<h3 id="running-mcp-servers-at-scale-the-real-challenges"><a class="anchor" href="#running-mcp-servers-at-scale-the-real-challenges" aria-label="Link to section">#</a>Running MCP Servers at Scale — The Real Challenges</h3>
+<ol>
+<li><strong>Authentication</strong> — who is calling? Per-tenant API keys, OAuth, JWT</li>
+<li><strong>Rate limiting</strong> — protect against abuse</li>
+<li><strong>Transport</strong> — stdio (local), HTTP+SSE (remote), streamable HTTP (2025)</li>
+<li><strong>Discovery</strong> — clients need to know what tools exist</li>
+<li><strong>Versioning</strong> — tool schemas change, clients must adapt</li>
+<li><strong>Observability</strong> — log every tool call, latency, errors</li>
+<li><strong>Multi-tenancy</strong> — one server, many tenants with isolated data</li>
+</ol>
+<h3 id="production-mcp-server-template"><a class="anchor" href="#production-mcp-server-template" aria-label="Link to section">#</a>Production MCP Server Template</h3>
+<pre><code class="language-python">from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
+import httpx
+
+mcp = FastMCP(&quot;policy-server&quot;)
+
+# ────── Multi-tenant authentication ──────
+@mcp.middleware
+async def auth_middleware(request, call_next):
+    api_key = request.headers.get(&quot;X-API-Key&quot;)
+    tenant = await lookup_tenant(api_key)
+    if not tenant:
+        raise PermissionError(&quot;Invalid API key&quot;)
+    request.state.tenant = tenant
+    return await call_next(request)
+
+# ────── Tool with structured input ──────
+class SearchInput(BaseModel):
+    query: str
+    department: str | None = None
+    top_k: int = 5
+
+@mcp.tool()
+async def search_policies(params: SearchInput, request) -&gt; str:
+    &quot;&quot;&quot;
+    Search policy documents scoped to caller&#39;s tenant.
+
+    Args:
+        query: Search query
+        department: Optional department filter
+        top_k: Number of results (1-20)
+    &quot;&quot;&quot;
+    tenant = request.state.tenant
+    results = await vector_db.search(
+        query=params.query,
+        filter={&quot;tenant_id&quot;: tenant.id, &quot;department&quot;: params.department},
+        top_k=params.top_k
+    )
+    return json.dumps([r.dict() for r in results])
+
+# ────── Resource with metadata ──────
+@mcp.resource(&quot;policies://{policy_id}&quot;)
+async def get_policy(policy_id: str, request) -&gt; str:
+    &quot;&quot;&quot;Read a single policy document.&quot;&quot;&quot;
+    tenant = request.state.tenant
+    policy = await db.policies.find_one({
+        &quot;id&quot;: policy_id,
+        &quot;tenant_id&quot;: tenant.id  # tenant isolation
+    })
+    if not policy:
+        raise NotFoundError()
+    return policy.content
+
+# ────── Run with HTTP transport (production) ──────
+if __name__ == &quot;__main__&quot;:
+    mcp.run(transport=&quot;http&quot;, host=&quot;0.0.0.0&quot;, port=8000)
+</code></pre>
+<h3 id="mcp-vs-function-calling-when-to-use-each"><a class="anchor" href="#mcp-vs-function-calling-when-to-use-each" aria-label="Link to section">#</a>MCP vs Function Calling — When to Use Each</h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>MCP</th>
+<th>Function Calling</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Standardization</strong></td>
+<td>✅ Open protocol</td>
+<td>❌ Vendor-specific</td>
+</tr>
+<tr>
+<td><strong>Reusability</strong></td>
+<td>Across clients</td>
+<td>Per project</td>
+</tr>
+<tr>
+<td><strong>Discovery</strong></td>
+<td>Tools listed dynamically</td>
+<td>Hardcoded</td>
+</tr>
+<tr>
+<td><strong>Setup complexity</strong></td>
+<td>Medium</td>
+<td>Low</td>
+</tr>
+<tr>
+<td><strong>Production recommendation</strong></td>
+<td>Multi-client, multi-tenant</td>
+<td>Single use case</td>
+</tr>
+</tbody></table>
+<h3 id="mcp-in-agent-stacks-langgraph-mcp"><a class="anchor" href="#mcp-in-agent-stacks-langgraph-mcp" aria-label="Link to section">#</a>MCP in Agent Stacks (LangGraph + MCP)</h3>
+<pre><code class="language-python">from langchain_mcp import MCPToolkit
+from mcp import StdioServerParameters
+
+server_params = StdioServerParameters(
+    command=&quot;python&quot;,
+    args=[&quot;mcp_server.py&quot;]
+)
+toolkit = MCPToolkit(server_params=server_params)
+tools = toolkit.get_tools()
+
+# Use with LangGraph
+from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model=&quot;gpt-4o&quot;)
+agent = create_react_agent(llm, tools)
+</code></pre>
+<hr>
+<h2 id="103-memory-context-engineering"><a class="anchor" href="#103-memory-context-engineering" aria-label="Link to section">#</a>10.3 Memory &amp; Context Engineering</h2>
+<h3 id="the-3-memory-tiers-production-mental-model"><a class="anchor" href="#the-3-memory-tiers-production-mental-model" aria-label="Link to section">#</a>The 3 Memory Tiers (Production Mental Model)</h3>
+<pre><code>┌────────────────────────────────────────────────────────────┐
+│  WORKING MEMORY (in-context)                                │
+│  - Current conversation, retrieved docs                     │
+│  - Lifetime: one LLM call                                   │
+│  - Size limit: context window (128k-1M tokens)              │
+│  - Fast, ephemeral                                          │
+├────────────────────────────────────────────────────────────┤
+│  SHORT-TERM MEMORY (session)                                │
+│  - Conversation history, intermediate state                 │
+│  - Lifetime: one session (thread_id)                        │
+│  - Storage: Redis, LangGraph checkpointer, Postgres         │
+│  - Fast, queryable                                          │
+├────────────────────────────────────────────────────────────┤
+│  LONG-TERM MEMORY (cross-session)                           │
+│  - User preferences, facts, learned patterns                │
+│  - Lifetime: persistent                                     │
+│  - Storage: Postgres, MongoDB, vector DB                     │
+│  - Needs explicit write logic (when to remember)            │
+└────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="honcho-a-reference-architecture-for-long-term-memory"><a class="anchor" href="#honcho-a-reference-architecture-for-long-term-memory" aria-label="Link to section">#</a>Honcho — a Reference Architecture for Long-Term Memory</h3>
+<p><strong>Honcho</strong> is an open-source memory framework that gives agents persistent, queryable memory across sessions. Key concepts:</p>
+<ul>
+<li><strong>Session</strong> = one conversation</li>
+<li><strong>Peer</strong> = an entity (user, agent, third party)</li>
+<li><strong>Observation</strong> = a fact about a peer</li>
+<li><strong>Context representation</strong> = derived state of what the agent &quot;knows&quot; about a peer</li>
+<li><strong>Dialectic API</strong> = peer reasons about its own context</li>
+</ul>
+<pre><code class="language-python">from honcho import Honcho
+
+# Initialize
+honcho = Honcho()
+
+# Create peers
+user = honcho.peer(&quot;user_123&quot;)
+agent = honcho.peer(&quot;support_agent&quot;)
+
+# Create session
+session = honcho.session(&quot;conversation_456&quot;)
+session.add_peers([user, agent])
+
+# Agent stores observations about user
+await user.observation(&quot;User prefers email over SMS notifications&quot;)
+await user.observation(&quot;User is a senior Python developer&quot;)
+
+# At next conversation, query context
+context = await user.context()
+# Returns: &quot;User prefers email. Senior Python dev. Asks detailed questions.&quot;
+
+# Inject into LLM prompt
+prompt = f&quot;&quot;&quot;You are talking to a user with this context:
+{context}
+
+User: {user_query}&quot;&quot;&quot;
+</code></pre>
+<h3 id="when-to-use-which-memory"><a class="anchor" href="#when-to-use-which-memory" aria-label="Link to section">#</a>When to Use Which Memory</h3>
+<table>
+<thead>
+<tr>
+<th>Use Case</th>
+<th>Memory Type</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Document chunks for current question</td>
+<td>Working memory (retrieved)</td>
+</tr>
+<tr>
+<td>Last 10 messages of conversation</td>
+<td>Short-term (LangGraph checkpointer)</td>
+</tr>
+<tr>
+<td>&quot;User always prefers JSON responses&quot;</td>
+<td>Long-term (Honcho / DB)</td>
+</tr>
+<tr>
+<td>&quot;Project X uses Postgres&quot;</td>
+<td>Long-term (DB)</td>
+</tr>
+<tr>
+<td>Tool outputs that don&#39;t fit context</td>
+<td>Scratchpad (external store)</td>
+</tr>
+</tbody></table>
+<h3 id="context-engineering-the-new-hotness"><a class="anchor" href="#context-engineering-the-new-hotness" aria-label="Link to section">#</a>Context Engineering (The New Hotness)</h3>
+<p><strong>Context engineering</strong> = the discipline of curating what goes into the LLM&#39;s context window, when, and in what form. Not just &quot;prompt engineering&quot; — includes:</p>
+<ul>
+<li><strong>Selection</strong> — what to include (retrieval, memory)</li>
+<li><strong>Compression</strong> — how to fit more in less space</li>
+<li><strong>Ordering</strong> — what comes first (lost in the middle problem)</li>
+<li><strong>Isolation</strong> — separating contexts for multi-agent (sub-agents don&#39;t see everything)</li>
+<li><strong>Caching</strong> — reusing repeated prefixes</li>
+</ul>
+<pre><code class="language-python"># Naive (often fails)
+prompt = f&quot;Context: {all_docs}\nQ: {query}&quot;
+
+# Engineered (works better)
+prompt = f&quot;&quot;&quot;You are an expert on {topic}.
+
+# Most relevant information:
+{top_3_chunks}
+
+# Background:
+{summary}
+
+# User preferences:
+{user_long_term_memory}
+
+Q: {query}
+A:&quot;&quot;&quot;
+</code></pre>
+<hr>
+<h2 id="104-evals-infrastructure-the-full-stack"><a class="anchor" href="#104-evals-infrastructure-the-full-stack" aria-label="Link to section">#</a>10.4 Evals Infrastructure (The Full Stack)</h2>
+<h3 id="the-3-layers-of-ai-evals"><a class="anchor" href="#the-3-layers-of-ai-evals" aria-label="Link to section">#</a>The 3 Layers of AI Evals</h3>
+<pre><code>┌────────────────────────────────────────────────────┐
+│  Layer 1: Unit Tests (component-level)             │
+│  - Test individual prompts, tools, retrievers      │
+│  - Fast, deterministic                             │
+│  - Example: &quot;If query contains &#39;PTO&#39;, tool X fires&quot;│
+└────────────────────────────────────────────────────┘
+                       ↓
+┌────────────────────────────────────────────────────┐
+│  Layer 2: Integration Tests (end-to-end)           │
+│  - Test full agent on golden dataset                │
+│  - Use RAGAS, DeepEval, custom metrics             │
+│  - Run on every PR                                 │
+└────────────────────────────────────────────────────┘
+                       ↓
+┌────────────────────────────────────────────────────┐
+│  Layer 3: Production Eval (live traffic)           │
+│  - LLM-as-judge on samples                         │
+│  - User feedback (thumbs up/down)                  │
+│  - Drift detection                                 │
+└────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="eval-frameworks-compared"><a class="anchor" href="#eval-frameworks-compared" aria-label="Link to section">#</a>Eval Frameworks Compared</h3>
+<table>
+<thead>
+<tr>
+<th>Framework</th>
+<th>Strengths</th>
+<th>When to Use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>RAGAS</strong></td>
+<td>RAG-specific metrics (Faithfulness, Context Precision/Recall)</td>
+<td>RAG systems</td>
+</tr>
+<tr>
+<td><strong>DeepEval</strong></td>
+<td>General, many metrics, pytest-like</td>
+<td>Unit-test-style evals</td>
+</tr>
+<tr>
+<td><strong>LangSmith</strong></td>
+<td>Built into LangChain, tracing + eval</td>
+<td>Already using LangChain</td>
+</tr>
+<tr>
+<td><strong>Braintrust</strong></td>
+<td>Experiment tracking, A/B scoring</td>
+<td>Production eval at scale</td>
+</tr>
+<tr>
+<td><strong>Phoenix (Arize)</strong></td>
+<td>Embedding drift, OpenTelemetry-native</td>
+<td>Mature observability stack</td>
+</tr>
+<tr>
+<td><strong>Custom (LLM-as-judge)</strong></td>
+<td>Tailored to your domain</td>
+<td>Specific business criteria</td>
+</tr>
+</tbody></table>
+<h3 id="llm-as-judge-template"><a class="anchor" href="#llm-as-judge-template" aria-label="Link to section">#</a>LLM-as-Judge Template</h3>
+<pre><code class="language-python">JUDGE_PROMPT = &quot;&quot;&quot;You are evaluating an AI agent&#39;s response.
+
+User question: {question}
+Agent&#39;s response: {response}
+Ground truth (if any): {ground_truth}
+Retrieved context: {context}
+
+Rate the response on these dimensions (1-5):
+- Correctness: Is the answer factually correct?
+- Helpfulness: Does it address the user&#39;s need?
+- Conciseness: Is it appropriately brief?
+- Citations: Are sources cited (if applicable)?
+
+Output JSON: {&quot;correctness&quot;: N, &quot;helpfulness&quot;: N, &quot;conciseness&quot;: N, &quot;citations&quot;: N, &quot;reasoning&quot;: &quot;...&quot;}&quot;&quot;&quot;
+
+judge_llm = ChatOpenAI(model=&quot;gpt-4o&quot;)
+def evaluate(question, response, context, ground_truth=None):
+    return judge_llm.invoke(JUDGE_PROMPT.format(
+        question=question, response=response,
+        context=context, ground_truth=ground_truth
+    ))
+</code></pre>
+<h3 id="the-golden-dataset"><a class="anchor" href="#the-golden-dataset" aria-label="Link to section">#</a>The Golden Dataset</h3>
+<p>A golden dataset = 50-200 hand-curated (query, expected_answer, optional context) triples. Use for:</p>
+<ul>
+<li>Regression testing (does this PR break anything?)</li>
+<li>Comparing prompt versions</li>
+<li>Smoke testing after deploys</li>
+</ul>
+<pre><code class="language-json">[
+  {
+    &quot;query&quot;: &quot;What&#39;s the PTO policy?&quot;,
+    &quot;expected_answer&quot;: &quot;15 days PTO, accrued monthly&quot;,
+    &quot;expected_tools&quot;: [&quot;search_policies&quot;],
+    &quot;must_cite&quot;: [&quot;policies://pto&quot;]
+  }
+]
+</code></pre>
+<h3 id="cicd-gate-for-prompts"><a class="anchor" href="#cicd-gate-for-prompts" aria-label="Link to section">#</a>Ci/cd Gate for Prompts</h3>
+<pre><code class="language-python"># .github/workflows/eval.yml
+def test_prompt_quality():
+    dataset = load_golden_dataset()
+    results = evaluate(dataset, current_prompt_version)
+
+    assert results.faithfulness &gt;= 0.92, f&quot;Faithfulness dropped: {results.faithfulness}&quot;
+    assert results.answer_relevancy &gt;= 0.90, f&quot;Relevancy dropped: {results.answer_relevancy}&quot;
+    assert results.cost_per_query &lt; 0.05, f&quot;Cost too high: ${results.cost_per_query}&quot;
+</code></pre>
+<h3 id="ab-testing-prompts-safely"><a class="anchor" href="#ab-testing-prompts-safely" aria-label="Link to section">#</a>A/b Testing Prompts (Safely)</h3>
+<pre><code class="language-python">import hashlib
+
+def route_prompt(user_id: str) -&gt; str:
+    &quot;&quot;&quot;Sticky A/B routing — same user always sees same variant.&quot;&quot;&quot;
+    bucket = int(hashlib.md5(user_id.encode()).hexdigest(), 16) % 100
+    if bucket &lt; 5:
+        return &quot;v2_candidate&quot;  # 5% on new
+    return &quot;v1_baseline&quot;        # 95% on current
+
+# Track metrics per variant in observability
+@traceable(tags={&quot;prompt_version&quot;: route_prompt(user_id)})
+def rag_query(question: str) -&gt; str:
+    return chain.invoke(question)
+</code></pre>
+<hr>
+<h2 id="105-observability-stacks-signoz-datadog-custom"><a class="anchor" href="#105-observability-stacks-signoz-datadog-custom" aria-label="Link to section">#</a>10.5 Observability Stacks (Signoz, Datadog, Custom)</h2>
+<h3 id="what-to-observe-in-an-agent-system"><a class="anchor" href="#what-to-observe-in-an-agent-system" aria-label="Link to section">#</a>What to Observe in an Agent System</h3>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│  LLM Layer                                              │
+│  - Per-call latency, tokens, cost                       │
+│  - Prompt &amp; response (with PII redacted)                │
+│  - Tool calls (which, when, with what args)             │
+│  - Cache hit/miss                                       │
+├─────────────────────────────────────────────────────────┤
+│  Agent Layer                                            │
+│  - Per-step decisions (what action did it choose?)      │
+│  - Iteration count                                      │
+│  - Loop detection                                       │
+│  - Reflection / self-critique events                    │
+├─────────────────────────────────────────────────────────┤
+│  Infrastructure                                         │
+│  - Request rate, error rate, p50/p95/p99 latency        │
+│  - Database query time                                  │
+│  - External API time                                    │
+│  - Memory / queue depth                                 │
+├─────────────────────────────────────────────────────────┤
+│  Business                                               │
+│  - User satisfaction (thumbs, comments)                 │
+│  - Task completion rate                                 │
+│  - Cost per tenant                                      │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="opentelemetry-native-signoz-honeycomb-tempo"><a class="anchor" href="#opentelemetry-native-signoz-honeycomb-tempo" aria-label="Link to section">#</a>OpenTelemetry-Native (Signoz, Honeycomb, Tempo)</h3>
+<pre><code class="language-python">from opentelemetry import trace
+from opentelemetry.instrumentation.openai import OpenAIInstrumentor
+
+# Auto-instrument OpenAI calls
+OpenAIInstrumentor().instrument()
+
+tracer = trace.get_tracer(__name__)
+
+@tracer.start_as_current_span(&quot;agent_step&quot;)
+def agent_step(state):
+    span = trace.get_current_span()
+    span.set_attribute(&quot;agent.iteration&quot;, state[&quot;iteration&quot;])
+    span.set_attribute(&quot;agent.chosen_action&quot;, action.name)
+    # ... do work
+    return state
+</code></pre>
+<h3 id="datadog-llm-observability"><a class="anchor" href="#datadog-llm-observability" aria-label="Link to section">#</a>Datadog LLM Observability</h3>
+<pre><code class="language-python">from ddtrace import tracer
+from ddtrace.llmobs import LLMObs
+
+LLMObs.enable()
+
+@LLMObs.llm(model_name=&quot;gpt-4o&quot;, model_provider=&quot;openai&quot;)
+def rag_query(question: str) -&gt; str:
+    docs = retriever.get_relevant_documents(question)
+    return llm.invoke(f&quot;Context: {docs}\nQ: {question}&quot;)
+</code></pre>
+<h3 id="what-to-alert-on"><a class="anchor" href="#what-to-alert-on" aria-label="Link to section">#</a>What to Alert On</h3>
+<ul>
+<li>Error rate spike (&gt; 2% baseline)</li>
+<li>p99 latency spike (&gt; 3x baseline)</li>
+<li>Token usage spike (&gt; 2x baseline)</li>
+<li>Cost anomaly (&gt;$X/day unexpected)</li>
+<li>Loop detection (same tool called &gt;5 times in a session)</li>
+<li>Eval regression in CI/CD</li>
+</ul>
+<hr>
+<h2 id="106-connector-integration-framework-oauth-third-party-saas"><a class="anchor" href="#106-connector-integration-framework-oauth-third-party-saas" aria-label="Link to section">#</a>10.6 Connector &amp; Integration Framework (OAUTH, Third-Party SaaS)</h2>
+<h3 id="oauth-20-flow-for-agent-integrations"><a class="anchor" href="#oauth-20-flow-for-agent-integrations" aria-label="Link to section">#</a>OAUTH 2.0 Flow for Agent Integrations</h3>
+<pre><code>┌────────┐                ┌──────────┐                ┌──────────┐
+│ User   │                │ Your App │                │  SaaS    │
+│        │                │ (Agent)  │                │ (Slack)  │
+└───┬────┘                └────┬─────┘                └────┬─────┘
+    │  1. &quot;Connect Slack&quot;     │                          │
+    │ ──────────────────────► │                          │
+    │                         │  2. Redirect to OAuth    │
+    │ ◄────────────────────── │                          │
+    │  3. User authorizes     │                          │
+    │ ──────────────────────────────────────────────────►│
+    │  4. Auth code           │                          │
+    │ ◄──────────────────────────────────────────────────│
+    │  5. Send code           │                          │
+    │ ──────────────────────► │                          │
+    │                         │  6. Exchange code        │
+    │                         │  for access + refresh    │
+    │                         │ ───────────────────────► │
+    │                         │ ◄─────────────────────── │
+    │                         │  7. Store tokens         │
+    │                         │  (encrypted, per-tenant) │
+    │                         │                          │
+    │              ... later, agent needs to act on user&#39;s behalf ...
+    │                         │  8. Use access token     │
+    │                         │ ───────────────────────► │
+    │                         │  9. Token expired!       │
+    │                         │ ◄─────────────────────── │
+    │                         │  10. Use refresh token   │
+    │                         │ ───────────────────────► │
+    │                         │  11. New access token    │
+    │                         │ ◄─────────────────────── │
+</code></pre>
+<h3 id="token-storage-production"><a class="anchor" href="#token-storage-production" aria-label="Link to section">#</a>Token Storage (Production)</h3>
+<pre><code class="language-python"># Store per-tenant, encrypted
+{
+  &quot;tenant_id&quot;: &quot;t_123&quot;,
+  &quot;provider&quot;: &quot;slack&quot;,
+  &quot;access_token&quot;: &quot;xoxb-...encrypted...&quot;,
+  &quot;refresh_token&quot;: &quot;xoxe-...encrypted...&quot;,
+  &quot;expires_at&quot;: &quot;2026-06-20T12:00:00Z&quot;,
+  &quot;scopes&quot;: [&quot;chat:write&quot;, &quot;channels:read&quot;],
+  &quot;user_id&quot;: &quot;U12345&quot;
+}
+
+# Always encrypt at rest (Fernet, KMS)
+# Always use refresh tokens (don&#39;t re-prompt user)
+# Always validate scope before action
+</code></pre>
+<h3 id="tool-design-discipline-production-standards"><a class="anchor" href="#tool-design-discipline-production-standards" aria-label="Link to section">#</a>Tool Design Discipline (Production Standards)</h3>
+<pre><code class="language-python"># ────── Good tool design ──────
+@mcp.tool()
+def create_support_ticket(
+    customer_email: str,
+    subject: str,
+    body: str,
+    priority: Literal[&quot;low&quot;, &quot;medium&quot;, &quot;high&quot;, &quot;urgent&quot;] = &quot;medium&quot;
+) -&gt; dict:
+    &quot;&quot;&quot;
+    Create a customer support ticket.
+
+    Args:
+        customer_email: Customer&#39;s email (must be valid format)
+        subject: Brief subject (max 200 chars)
+        body: Detailed description
+        priority: Ticket priority
+
+    Returns:
+        {&quot;ticket_id&quot;: &quot;T-12345&quot;, &quot;status&quot;: &quot;open&quot;, &quot;url&quot;: &quot;...&quot;}
+
+    Raises:
+        ValidationError: If email format invalid
+        RateLimitError: If too many tickets created recently
+    &quot;&quot;&quot;
+    # 1. Validate inputs
+    if not is_valid_email(customer_email):
+        raise ValidationError(&quot;Invalid email format&quot;)
+
+    # 2. Idempotency: use request_id to prevent duplicates
+    if existing := check_idempotency_key(request_id):
+        return existing
+
+    # 3. Retry with backoff
+    for attempt in range(3):
+        try:
+            ticket = zendesk.create_ticket(...)
+            return ticket
+        except TransientError:
+            await asyncio.sleep(2 ** attempt)
+    raise TicketCreationError(&quot;Failed after 3 attempts&quot;)
+</code></pre>
+<h3 id="the-6-properties-of-a-good-tool"><a class="anchor" href="#the-6-properties-of-a-good-tool" aria-label="Link to section">#</a>The 6 Properties of a Good Tool</h3>
+<ol>
+<li><strong>Clear name</strong> — <code>search_policies</code> not <code>do_thing</code></li>
+<li><strong>Typed parameters</strong> — Pydantic models, not untyped dicts</li>
+<li><strong>Helpful errors</strong> — &quot;Invalid email&quot; not &quot;Error 400&quot;</li>
+<li><strong>Idempotent</strong> — calling twice doesn&#39;t create duplicates</li>
+<li><strong>Bounded output</strong> — returns max N items / M tokens</li>
+<li><strong>Documented side effects</strong> — what does it change?</li>
+</ol>
+<hr>
+<h2 id="107-multi-tenancy-for-ai-agents"><a class="anchor" href="#107-multi-tenancy-for-ai-agents" aria-label="Link to section">#</a>10.7 Multi-Tenancy for AI Agents</h2>
+<h3 id="the-4-isolation-levels"><a class="anchor" href="#the-4-isolation-levels" aria-label="Link to section">#</a>The 4 Isolation Levels</h3>
+<pre><code>Level 1: Shared everything, no isolation
+         → Multiple tenants in same agent, same data
+         → Cheapest, fastest, but data leaks possible
+
+Level 2: Per-tenant data isolation
+         → Same agent, separate data per tenant
+         → RAG retrieves only tenant&#39;s docs
+         → Common pattern
+
+Level 3: Per-tenant configuration
+         → Same agent, but custom prompts, tools, model per tenant
+         → More flexibility, more cost
+
+Level 4: Per-tenant agent deployment
+         → Each tenant gets own agent instance
+         → Most isolation, most expensive
+         → For regulated / enterprise
+</code></pre>
+<h3 id="implementation-patterns"><a class="anchor" href="#implementation-patterns" aria-label="Link to section">#</a>Implementation Patterns</h3>
+<pre><code class="language-python"># ────── Per-tenant filtering (vector search) ──────
+results = vector_db.search(
+    query=query_embedding,
+    query_filter=Filter(must=[
+        FieldCondition(key=&quot;tenant_id&quot;, match=MatchValue(value=tenant.id))
+    ])
+)
+
+# ────── Per-tenant config (DB lookup at runtime) ──────
+tenant_config = db.tenant_configs.find_one({&quot;tenant_id&quot;: tenant.id})
+prompt = tenant_config[&quot;system_prompt&quot;]
+llm = ChatOpenAI(model=tenant_config[&quot;model&quot;])
+
+# ────── Per-tenant rate limit ──────
+@limiter.limit(lambda: f&quot;{tenant.id}:100/minute&quot;)
+async def chat(query: str):
+    ...
+</code></pre>
+<h3 id="audit-trails"><a class="anchor" href="#audit-trails" aria-label="Link to section">#</a>Audit Trails</h3>
+<pre><code class="language-python"># Log every action with full context for compliance
+audit_log.info({
+    &quot;timestamp&quot;: now(),
+    &quot;tenant_id&quot;: tenant.id,
+    &quot;user_id&quot;: user.id,
+    &quot;action&quot;: &quot;tool_call&quot;,
+    &quot;tool&quot;: &quot;create_support_ticket&quot;,
+    &quot;args_hash&quot;: hashlib.sha256(json.dumps(args).encode()).hexdigest(),
+    &quot;result&quot;: &quot;success&quot;,
+    &quot;cost_usd&quot;: 0.0023,
+    &quot;ip_address&quot;: request.client.host,
+    &quot;user_agent&quot;: request.headers.get(&quot;user-agent&quot;)
+})
+</code></pre>
+<hr>
+<h2 id="108-healthcare-ai-specifics"><a class="anchor" href="#108-healthcare-ai-specifics" aria-label="Link to section">#</a>10.8 Healthcare AI Specifics</h2>
+<h3 id="the-5-healthcare-ai-concerns"><a class="anchor" href="#the-5-healthcare-ai-concerns" aria-label="Link to section">#</a>The 5 Healthcare-AI Concerns</h3>
+<ol>
+<li><strong>PHI (Protected Health Information)</strong> — strict HIPAA, can&#39;t leak</li>
+<li><strong>Clinical accuracy</strong> — wrong drug dose = patient harm</li>
+<li><strong>Bias &amp; fairness</strong> — must work across demographics</li>
+<li><strong>On-premise deployment</strong> — hospitals often can&#39;t use cloud</li>
+<li><strong>Audit &amp; traceability</strong> — every decision must be explainable</li>
+</ol>
+<h3 id="healthcare-rag-document-types-chunking"><a class="anchor" href="#healthcare-rag-document-types-chunking" aria-label="Link to section">#</a>Healthcare RAG: Document Types &amp; Chunking</h3>
+<pre><code>Document type                  Best chunking strategy
+─────────────────────────────────────────────────────
+Clinical notes (unstructured)  Section + semantic
+Lab results (tables)           Table-aware (preserve structure)
+Drug labels (structured)        Field-aware (use schema)
+Patient records (mixed)         De-identify first, then chunk
+Research papers (PDFs)          Section + citation preservation
+</code></pre>
+<h3 id="de-identification-healthcare-specific-pii"><a class="anchor" href="#de-identification-healthcare-specific-pii" aria-label="Link to section">#</a>De-identification (Healthcare-Specific PII)</h3>
+<pre><code class="language-python"># HIPAA Safe Harbor: 18 identifiers must be removed
+HIPAA_IDENTIFIERS = [
+    &quot;names&quot;, &quot;geographic_subdivisions&quot;, &quot;dates&quot;,
+    &quot;phone&quot;, &quot;fax&quot;, &quot;email&quot;, &quot;ssn&quot;, &quot;medical_record&quot;,
+    &quot;health_plan_id&quot;, &quot;account&quot;, &quot;certificate_license&quot;,
+    &quot;vehicle_id&quot;, &quot;device_id&quot;, &quot;url&quot;, &quot;ip_address&quot;,
+    &quot;biometric&quot;, &quot;photo&quot;, &quot;age_over_89&quot;
+]
+
+def deidentify_clinical_note(text: str) -&gt; str:
+    # Use specialized tool: Philter, NER model
+    # Replace with [REDACTED] or fake surrogates
+    pass
+</code></pre>
+<h3 id="on-premise-deployment-patterns"><a class="anchor" href="#on-premise-deployment-patterns" aria-label="Link to section">#</a>On-Premise Deployment Patterns</h3>
+<pre><code class="language-python"># Option 1: Self-hosted LLM (Llama, Mistral)
+# Use vLLM, TGI, llama.cpp for inference
+from vllm import LLM, SamplingParams
+
+llm = LLM(model=&quot;meta-llama/Llama-3-70b-instruct&quot;)
+outputs = llm.generate([&quot;What is diabetes?&quot;], SamplingParams(temperature=0))
+
+# Option 2: Private cloud (Azure Health Data Services, AWS HealthLake)
+# Option 3: Hybrid — embeddings in cloud, inference on-prem
+</code></pre>
+<h3 id="indian-language-ai-sarvam-context"><a class="anchor" href="#indian-language-ai-sarvam-context" aria-label="Link to section">#</a>Indian Language AI (Sarvam Context)</h3>
+<ul>
+<li><strong>Multilingual embeddings</strong> (IndicBERT, BGE-M3, Cohere v3)</li>
+<li><strong>Translation pipelines</strong> (Sarvam, IndicTrans, NLLB)</li>
+<li><strong>Code-mixing handling</strong> (Hinglish, Tanglish)</li>
+<li><strong>Script normalization</strong> (Devanagari variants)</li>
+<li><strong>Cultural context</strong> (formality, idioms)</li>
+</ul>
+<hr>
+<h2 id="109-data-strategy-for-foundation-model-development"><a class="anchor" href="#109-data-strategy-for-foundation-model-development" aria-label="Link to section">#</a>10.9 Data Strategy for Foundation Model Development</h2>
+<h3 id="pre-training-vs-post-training-data"><a class="anchor" href="#pre-training-vs-post-training-data" aria-label="Link to section">#</a>Pre-Training vs Post-Training Data</h3>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│ PRE-TRAINING DATA                                        │
+│ - Web crawl, books, code, scientific papers              │
+│ - Trillions of tokens                                    │
+│ - Self-supervised (next token prediction)                 │
+│ - Quality &gt; quantity at this scale                       │
+│ - Heavy deduplication, contamination detection           │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│ POST-TRAINING DATA (SFT, RLHF, DPO)                      │
+│ - High-quality (instruction, response) pairs             │
+│ - Preference data (A vs B rankings)                      │
+│ - Domain-specific (code, math, reasoning)                │
+│ - 10k-1M examples (vs trillions for pre-training)        │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="data-mixture-strategy"><a class="anchor" href="#data-mixture-strategy" aria-label="Link to section">#</a>Data Mixture Strategy</h3>
+<pre><code class="language-yaml"># Example: Code-focused model
+data_mixture:
+  code_github:           0.40   # high-quality repos
+  code_stackexchange:    0.10   # Q&amp;A
+  math_arxiv:            0.15   # reasoning
+  general_web:           0.20   # language understanding
+  multilingual:          0.10   # non-English
+  instruction_tuning:    0.05   # format alignment
+</code></pre>
+<h3 id="synthetic-data-generation"><a class="anchor" href="#synthetic-data-generation" aria-label="Link to section">#</a>Synthetic Data Generation</h3>
+<pre><code class="language-python"># Self-play: model generates problems, solves them, learns
+def self_play_loop(model, n_iterations=1000):
+    for i in range(n_iterations):
+        # Generate problems
+        problems = model.generate(
+            &quot;Generate 10 hard math problems at competition level&quot;,
+            n=10
+        )
+        # Solve them
+        solutions = model.batch_solve(problems)
+        # Verify (math: symbolic check, code: tests)
+        verified = [s for s, p in zip(solutions, problems) if verify(s, p)]
+        # Add to training data
+        training_data.extend(verified)
+        # Retrain on new data
+        model.fine_tune(training_data)
+</code></pre>
+<h3 id="data-quality-filters"><a class="anchor" href="#data-quality-filters" aria-label="Link to section">#</a>Data Quality Filters</h3>
+<pre><code class="language-python"># 1. Deduplication (MinHash, SimHash)
+# 2. Contamination detection (n-gram overlap with eval sets)
+# 3. Perplexity filtering (drop outliers)
+# 4. Toxicity filtering (Perspective API, custom)
+# 5. Length / format filters
+# 6. Language ID filtering (drop non-target languages)
+
+# MinHash dedup example
+from datasketch import MinHash, MinHashLSH
+
+lsh = MinHashLSH(threshold=0.8, num_perm=128)
+for doc in documents:
+    m = MinHash(num_perm=128)
+    for word in doc.tokens:
+        m.update(word.encode())
+    if not lsh.query(m):
+        lsh.insert(doc.id, m)
+        yield doc  # unique
+</code></pre>
+<h3 id="sandbox-execution-verifying-model-outputs"><a class="anchor" href="#sandbox-execution-verifying-model-outputs" aria-label="Link to section">#</a>Sandbox Execution (Verifying Model Outputs)</h3>
+<pre><code class="language-python"># For code: execute, test, capture results
+import subprocess, json
+
+def verify_code_solution(problem: str, code: str, tests: list) -&gt; bool:
+    &quot;&quot;&quot;Run code in sandbox, check test results.&quot;&quot;&quot;
+    try:
+        # Write code to file
+        with open(&quot;/tmp/solution.py&quot;, &quot;w&quot;) as f:
+            f.write(code)
+
+        # Run with timeout, no network
+        result = subprocess.run(
+            [&quot;python&quot;, &quot;/tmp/solution.py&quot;],
+            capture_output=True, timeout=5
+        )
+
+        # Check tests pass
+        for test in tests:
+            test_result = subprocess.run(
+                [&quot;python&quot;, &quot;-c&quot;, test],
+                capture_output=True, timeout=5
+            )
+            if test_result.returncode != 0:
+                return False
+        return True
+    except subprocess.TimeoutExpired:
+        return False
+</code></pre>
+<hr>
+<h2 id="1010-distributed-training-fundamentals"><a class="anchor" href="#1010-distributed-training-fundamentals" aria-label="Link to section">#</a>10.10 Distributed Training Fundamentals</h2>
+<h3 id="the-4-parallelism-strategies"><a class="anchor" href="#the-4-parallelism-strategies" aria-label="Link to section">#</a>The 4 Parallelism Strategies</h3>
+<pre><code>┌────────────────────────────────────────────────────────┐
+│ DATA PARALLELISM                                         │
+│ - Same model on each GPU                                │
+│ - Different data shard on each                           │
+│ - Gradients averaged across GPUs                         │
+│ - Best for: small models, lots of data                   │
+│ - Tools: PyTorch DDP, Horovod                           │
+├────────────────────────────────────────────────────────┤
+│ TENSOR PARALLELISM                                       │
+│ - Split individual weight matrices across GPUs           │
+│ - Each GPU computes part of each layer                   │
+│ - Best for: very large models that don&#39;t fit on one GPU  │
+│ - Tools: Megatron-LM, PyTorch TP                        │
+├────────────────────────────────────────────────────────┤
+│ PIPELINE PARALLELISM                                     │
+│ - Different layers on different GPUs                     │
+│ - Pipeline bubbles (idle time at start/end)              │
+│ - Best for: very deep models                             │
+│ - Tools: PipeDream, Megatron-LM, PyTorch Pipeline        │
+├────────────────────────────────────────────────────────┤
+│ EXPERT PARALLELISM (MoE)                                 │
+│ - Route tokens to top-K of N experts                     │
+│ - Experts distributed across GPUs                        │
+│ - Best for: sparse MoE models                            │
+│ - Tools: DeepSpeed-MoE, Megablox                        │
+└────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="3d-parallelism-combining-all"><a class="anchor" href="#3d-parallelism-combining-all" aria-label="Link to section">#</a>3d Parallelism (Combining All)</h3>
+<p>Most large training runs combine:</p>
+<ul>
+<li><strong>Tensor parallel</strong> within a node (NVLink is fast)</li>
+<li><strong>Pipeline parallel</strong> across nodes (slower interconnect)</li>
+<li><strong>Data parallel</strong> for gradient averaging</li>
+</ul>
+<h3 id="mixed-precision-training"><a class="anchor" href="#mixed-precision-training" aria-label="Link to section">#</a>Mixed Precision Training</h3>
+<pre><code class="language-python"># Use bfloat16 for forward/backward, float32 for optimizer states
+from torch.cuda.amp import autocast, GradScaler
+
+scaler = GradScaler()
+
+for batch in dataloader:
+    optimizer.zero_grad()
+
+    with autocast(dtype=torch.bfloat16):  # or fp16
+        loss = model(batch)
+
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
+</code></pre>
+<h3 id="memory-optimization-techniques"><a class="anchor" href="#memory-optimization-techniques" aria-label="Link to section">#</a>Memory Optimization Techniques</h3>
+<table>
+<thead>
+<tr>
+<th>Technique</th>
+<th>Memory Saved</th>
+<th>Trade-off</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Mixed precision (bf16)</strong></td>
+<td>~50%</td>
+<td>Negligible quality loss</td>
+</tr>
+<tr>
+<td><strong>Gradient accumulation</strong></td>
+<td>O(N)</td>
+<td>N times slower step</td>
+</tr>
+<tr>
+<td><strong>Activation checkpointing</strong></td>
+<td>~50% activation memory</td>
+<td>30% slower</td>
+</tr>
+<tr>
+<td><strong>ZeRO-1</strong> (optimizer state sharded)</td>
+<td>~4x</td>
+<td>Extra communication</td>
+</tr>
+<tr>
+<td><strong>ZeRO-2</strong> (gradients sharded)</td>
+<td>~8x</td>
+<td>More communication</td>
+</tr>
+<tr>
+<td><strong>ZeRO-3</strong> (params sharded)</td>
+<td>Linear in N GPUs</td>
+<td>Most communication</td>
+</tr>
+<tr>
+<td><strong>FSDP</strong> (PyTorch native ZeRO-3)</td>
+<td>Linear in N GPUs</td>
+<td>Same as ZeRO-3</td>
+</tr>
+</tbody></table>
+<h3 id="zero-fsdp-example"><a class="anchor" href="#zero-fsdp-example" aria-label="Link to section">#</a>ZERO / FSDP Example</h3>
+<pre><code class="language-python">from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import MixedPrecision, BackwardPrefetch
+
+# Wrap model with FSDP
+model = FSDP(
+    model,
+    mixed_precision=MixedPrecision(
+        param_dtype=torch.bfloat16,
+        reduce_dtype=torch.bfloat16,
+        buffer_dtype=torch.bfloat16,
+    ),
+    backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+    device_id=torch.cuda.current_device(),
+)
+
+# Training loop unchanged — FSDP handles sharding
+</code></pre>
+<h3 id="megatron-lm-quick-overview"><a class="anchor" href="#megatron-lm-quick-overview" aria-label="Link to section">#</a>Megatron-LM Quick Overview</h3>
+<p>NVIDIA&#39;s framework for training trillion-parameter models. Key contributions:</p>
+<ul>
+<li><strong>Tensor parallelism</strong> with optimized all-reduce</li>
+<li><strong>Pipeline parallelism</strong> with 1F1B schedule (reduces bubbles)</li>
+<li><strong>Sequence parallelism</strong> for layer norm/dropout</li>
+<li><strong>Distributed optimizer</strong> (ZeRO-style)</li>
+</ul>
+<h3 id="training-stability-debugging"><a class="anchor" href="#training-stability-debugging" aria-label="Link to section">#</a>Training Stability Debugging</h3>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Loss spikes to NaN</td>
+<td>LR too high, exploding gradient</td>
+<td>Gradient clipping, lower LR</td>
+</tr>
+<tr>
+<td>Loss plateau</td>
+<td>LR too low, saturated</td>
+<td>Warmup, LR schedule</td>
+</tr>
+<tr>
+<td>Loss diverges mid-training</td>
+<td>Data issue, numerical instability</td>
+<td>Skip bad batches, check data</td>
+</tr>
+<tr>
+<td>Throughput drops</td>
+<td>GPU thermal throttling, OOM</td>
+<td>Reduce batch, check cooling</td>
+</tr>
+<tr>
+<td>Convergence slow</td>
+<td>Model too small, data too hard</td>
+<td>Scale up, curriculum learning</td>
+</tr>
+</tbody></table>
+<h3 id="checkpointing-resume"><a class="anchor" href="#checkpointing-resume" aria-label="Link to section">#</a>Checkpointing &amp; Resume</h3>
+<pre><code class="language-python"># Save checkpoint
+def save_checkpoint(model, optimizer, step, path):
+    state = {
+        &quot;model&quot;: model.state_dict(),
+        &quot;optimizer&quot;: optimizer.state_dict(),
+        &quot;step&quot;: step,
+        &quot;rng_state&quot;: torch.get_rng_state(),
+    }
+    if torch.distributed.is_initialized():
+        state[&quot;sharded_metadata&quot;] = model.local_state_dict()
+    torch.save(state, path)
+
+# Save with sharding (saves memory)
+from torch.distributed.fsdp import StateDictType, FullStateDictConfig
+cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+model.save_state_dict(path, cfg)
+</code></pre>
+<hr>
+<h2 id="1011-eval-quality-frameworks-reference-card"><a class="anchor" href="#1011-eval-quality-frameworks-reference-card" aria-label="Link to section">#</a>10.11 Eval &amp; Quality Frameworks (Reference Card)</h2>
+<h3 id="ragas-metrics-quick-reference"><a class="anchor" href="#ragas-metrics-quick-reference" aria-label="Link to section">#</a>RAGAS Metrics (Quick Reference)</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Question</th>
+<th>Formula (simplified)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Faithfulness</strong></td>
+<td>Is the answer supported by context?</td>
+<td>Claims in answer that are supported / total claims</td>
+</tr>
+<tr>
+<td><strong>Answer Relevancy</strong></td>
+<td>Does it answer the question?</td>
+<td>Cosine similarity of answer to question</td>
+</tr>
+<tr>
+<td><strong>Context Precision</strong></td>
+<td>Are retrieved chunks relevant?</td>
+<td>Relevant / total retrieved (ranked)</td>
+</tr>
+<tr>
+<td><strong>Context Recall</strong></td>
+<td>Did we retrieve all needed info?</td>
+<td>Claims in ground truth that are in context / total claims</td>
+</tr>
+</tbody></table>
+<h3 id="deepeval-metrics"><a class="anchor" href="#deepeval-metrics" aria-label="Link to section">#</a>DeepEval Metrics</h3>
+<ul>
+<li>Answer Relevancy</li>
+<li>Faithfulness</li>
+<li>Contextual Precision/Recall</li>
+<li>Hallucination</li>
+<li>Bias</li>
+<li>Toxicity</li>
+<li>Summarization quality</li>
+<li>JSON validity</li>
+<li>G-Eval (custom)</li>
+</ul>
+<h3 id="braintrust-concepts"><a class="anchor" href="#braintrust-concepts" aria-label="Link to section">#</a>Braintrust Concepts</h3>
+<ul>
+<li><strong>Experiments</strong> — versioned runs of evals</li>
+<li><strong>Datasets</strong> — golden test sets</li>
+<li><strong>Scoring</strong> — online + offline</li>
+<li><strong>A/B testing</strong> — compare prompt/model versions</li>
+<li><strong>Logs</strong> — every LLM call captured</li>
+</ul>
+<hr>
+<h2 id="1012-honcho-long-term-memory-deeper-dive"><a class="anchor" href="#1012-honcho-long-term-memory-deeper-dive" aria-label="Link to section">#</a>10.12 Honcho &amp; Long-Term Memory: Deeper Dive</h2>
+<h3 id="honchos-dialectic-api"><a class="anchor" href="#honchos-dialectic-api" aria-label="Link to section">#</a>Honcho&#39;s Dialectic API</h3>
+<p>The killer feature: peers can <strong>reason about their own context</strong>, not just store facts.</p>
+<pre><code class="language-python"># Get the current context representation
+context = await user.context(representation={&quot;type&quot;: &quot;profile&quot;})
+
+# Ask the peer a question about its context
+insight = await user.chat(
+    &quot;What does this user care about most?&quot;
+)
+# Returns: &quot;The user values accuracy over speed, prefers detailed explanations, and is working on RAG systems.&quot;
+</code></pre>
+<h3 id="when-to-write-to-long-term-memory"><a class="anchor" href="#when-to-write-to-long-term-memory" aria-label="Link to section">#</a>When to Write to Long-Term Memory</h3>
+<p>Don&#39;t write everything — be selective:</p>
+<pre><code class="language-python">def should_remember(message: str, response: str) -&gt; bool:
+    &quot;&quot;&quot;Decide if this exchange reveals a stable user preference.&quot;&quot;&quot;
+    signals = [
+        is_preference_statement(message),    # &quot;I prefer...&quot;
+        is_fact_about_user(message),         # &quot;I work at...&quot;
+        is_recurring_pattern(message),       # Seen similar 3+ times
+        is_explicit_correction(message),     # &quot;No, I meant...&quot;
+    ]
+    return any(signals)
+</code></pre>
+<h3 id="memory-retrieval-at-query-time"><a class="anchor" href="#memory-retrieval-at-query-time" aria-label="Link to section">#</a>Memory Retrieval at Query Time</h3>
+<pre><code class="language-python"># Combine: retrieved docs + long-term memory
+def build_context(user_id: str, query: str) -&gt; str:
+    docs = vector_db.search(query, top_k=5)
+    memory = honcho.peer(user_id).context()
+    return f&quot;&quot;&quot;# Relevant documents:
+{format_docs(docs)}
+
+# What I know about this user:
+{memory}
+
+# Current question:
+{query}&quot;&quot;&quot;
+</code></pre>
+<hr>
+<h2 id="1013-production-prompt-iteration-workflow"><a class="anchor" href="#1013-production-prompt-iteration-workflow" aria-label="Link to section">#</a>10.13 Production Prompt Iteration Workflow</h2>
+<h3 id="the-loop"><a class="anchor" href="#the-loop" aria-label="Link to section">#</a>The Loop</h3>
+<pre><code>┌──────────────────────────────────────────────────────────┐
+│ 1. OBSERVE  — Find a failing case in production          │
+│     (LangSmith trace, user complaint, eval score drop)   │
+├──────────────────────────────────────────────────────────┤
+│ 2. HYPOTHESIZE  — Why did it fail?                       │
+│     (Bad retrieval? Bad prompt? Model limitation?)       │
+├──────────────────────────────────────────────────────────┤
+│ 3. FIX  — Edit prompt, add example, change model         │
+│     (Smallest change first)                              │
+├──────────────────────────────────────────────────────────┤
+│ 4. MEASURE  — Run on golden set + sample of failure      │
+│     (Did scores improve? Any new failures?)              │
+├──────────────────────────────────────────────────────────┤
+│ 5. SHIP  — Deploy with feature flag (5% canary)          │
+│     (Monitor metrics, compare to baseline)               │
+├──────────────────────────────────────────────────────────┤
+│ 6. ITERATE  — If better, expand to 100%; if worse,      │
+│     rollback and go back to step 2                       │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="safe-rollback-patterns"><a class="anchor" href="#safe-rollback-patterns" aria-label="Link to section">#</a>Safe Rollback Patterns</h3>
+<pre><code class="language-python"># Versioned prompts
+PROMPT_VERSIONS = {
+    &quot;v1.2.0&quot;: &quot;You are a helpful assistant...&quot;,  # current
+    &quot;v1.1.0&quot;: &quot;You are an assistant...&quot;,         # last good
+}
+
+# Feature flag for instant rollback
+def get_prompt(tenant: Tenant) -&gt; str:
+    if tenant.feature_flags.get(&quot;use_new_prompt&quot;, False):
+        return PROMPT_VERSIONS[&quot;v1.2.0&quot;]
+    return PROMPT_VERSIONS[&quot;v1.1.0&quot;]
+
+# A/B with auto-rollback
+if metrics[&quot;new_prompt&quot;].error_rate &gt; metrics[&quot;old_prompt&quot;].error_rate * 1.5:
+    alert(&quot;Auto-rolling back: new prompt regressed&quot;)
+    feature_flags.disable_for_all_tenants(&quot;use_new_prompt&quot;)
+</code></pre>
+<hr>
+<h2 id="1014-streaming-cost-latency-for-live-agent-traffic"><a class="anchor" href="#1014-streaming-cost-latency-for-live-agent-traffic" aria-label="Link to section">#</a>10.14 Streaming, Cost &amp; Latency for Live Agent Traffic</h2>
+<h3 id="streaming-architecture-for-long-agent-runs"><a class="anchor" href="#streaming-architecture-for-long-agent-runs" aria-label="Link to section">#</a>Streaming Architecture for Long Agent Runs</h3>
+<pre><code class="language-python"># Server-Sent Events (SSE) for one-way streaming
+from fastapi.responses import StreamingResponse
+
+@app.post(&quot;/agent/stream&quot;)
+async def stream_agent_run(query: str):
+    async def event_generator():
+        async for event in agent.astream_events(query, version=&quot;v2&quot;):
+            yield f&quot;event: {event[&#39;event&#39;]}\n&quot;
+            yield f&quot;data: {json.dumps(event[&#39;data&#39;])}\n\n&quot;
+
+    return StreamingResponse(event_generator(), media_type=&quot;text/event-stream&quot;)
+
+# WebSocket for two-way (interrupt, steer)
+from fastapi import WebSocket
+
+@app.websocket(&quot;/ws/agent&quot;)
+async def agent_socket(ws: WebSocket):
+    await ws.accept()
+    config = {&quot;configurable&quot;: {&quot;thread_id&quot;: ws.query_params[&quot;thread_id&quot;]}}
+
+    while True:
+        user_msg = await ws.receive_text()
+        async for event in agent.astream_events(
+            {&quot;messages&quot;: [(&quot;user&quot;, user_msg)]}, config=config, version=&quot;v2&quot;
+        ):
+            await ws.send_json(event)
+</code></pre>
+<h3 id="token-level-streaming-for-better-ux"><a class="anchor" href="#token-level-streaming-for-better-ux" aria-label="Link to section">#</a>Token-Level Streaming for Better UX</h3>
+<pre><code class="language-python"># Stream individual tokens as they&#39;re generated
+async for chunk in llm.astream(messages):
+    yield f&quot;data: {json.dumps({&#39;token&#39;: chunk.content})}\n\n&quot;
+</code></pre>
+<h3 id="cost-attribution-per-tenant"><a class="anchor" href="#cost-attribution-per-tenant" aria-label="Link to section">#</a>Cost Attribution Per Tenant</h3>
+<pre><code class="language-python"># Tag every LLM call with tenant + feature
+@traceable(tags={&quot;tenant_id&quot;: tenant.id, &quot;feature&quot;: &quot;chat&quot;})
+def rag_query(question: str) -&gt; str:
+    return llm.invoke(question)
+
+# Aggregate in observability
+# LangSmith: filter by tag, sum tokens × cost
+# Datadog: same with custom tags
+</code></pre>
+<h3 id="latency-engineering-for-multi-step-agents"><a class="anchor" href="#latency-engineering-for-multi-step-agents" aria-label="Link to section">#</a>Latency Engineering for Multi-Step Agents</h3>
+<pre><code class="language-python"># Speculative: start LLM call during retrieval
+async def fast_agent(query):
+    # Start retrieval and LLM in parallel
+    retrieval_task = asyncio.create_task(retrieve(query))
+    initial_llm_task = asyncio.create_task(
+        llm.ainvoke(f&quot;Given a query about {query[:50]}, I will answer based on retrieved docs.&quot;)
+    )
+    docs = await retrieval_task
+    return await llm.ainvoke(f&quot;Context: {docs}\nQ: {query}&quot;)
+</code></pre>
+<hr>
+<h2 id="1015-quick-fire-qa-for-the-jds-50-additional-questions"><a class="anchor" href="#1015-quick-fire-qa-for-the-jds-50-additional-questions" aria-label="Link to section">#</a>10.15 Quick-Fire Q&amp;A for the JDs (50+ Additional Questions)</h2>
+<h3 id="mcp-tool-design"><a class="anchor" href="#mcp-tool-design" aria-label="Link to section">#</a>MCP &amp; Tool Design</h3>
+<p><strong>Q1: How do you run an MCP server at scale?</strong></p>
+<ul>
+<li>Stateless HTTP transport behind a load balancer</li>
+<li>Per-tenant auth middleware</li>
+<li>Rate limiting per tenant</li>
+<li>Observability: log every tool call with tenant_id</li>
+<li>Versioned tool schemas, with deprecation warnings</li>
+<li>Health check endpoint for orchestration</li>
+</ul>
+<p><strong>Q2: How do you handle tool errors in an agent?</strong></p>
+<ul>
+<li>Retry with exponential backoff for transient errors</li>
+<li>Circuit breaker for repeated failures</li>
+<li>Return structured error to LLM so it can adapt</li>
+<li>Never silently swallow errors</li>
+<li>Distinguish: validation error (don&#39;t retry) vs transient (retry)</li>
+</ul>
+<p><strong>Q3: What&#39;s idempotency and why does it matter for tools?</strong></p>
+<ul>
+<li>Calling tool twice with same args = same result</li>
+<li>Use idempotency keys for &quot;create&quot; operations</li>
+<li>Critical for retries that might double-charge, double-create</li>
+</ul>
+<p><strong>Q4: How do you version tool schemas without breaking agents?</strong></p>
+<ul>
+<li>Add new fields as optional (default values)</li>
+<li>Deprecate fields with warnings, don&#39;t remove immediately</li>
+<li>Provide migration period with both old + new tools</li>
+<li>Major version bump for breaking changes</li>
+</ul>
+<h3 id="memory-context"><a class="anchor" href="#memory-context" aria-label="Link to section">#</a>Memory &amp; Context</h3>
+<p><strong>Q5: Working memory vs short-term vs long-term — when to use each?</strong></p>
+<ul>
+<li>Working: current retrieved docs (per call)</li>
+<li>Short-term: conversation history (per session, checkpointer)</li>
+<li>Long-term: user facts, preferences (across sessions, DB/Honcho)</li>
+</ul>
+<p><strong>Q6: What is the &quot;lost in the middle&quot; problem?</strong></p>
+<ul>
+<li>LLMs attend better to start and end of long context</li>
+<li>Middle info often ignored</li>
+<li>Mitigation: put most important info at start/end, use re-ranking</li>
+</ul>
+<p><strong>Q7: How do you decide what to put in long-term memory?</strong></p>
+<ul>
+<li>Stable preferences (&quot;I prefer JSON&quot;)</li>
+<li>Facts about user (&quot;works at X&quot;)</li>
+<li>Recurring patterns (3+ times)</li>
+<li>Explicit corrections</li>
+<li>NOT: every single message</li>
+</ul>
+<p><strong>Q8: How do you prevent memory from becoming stale?</strong></p>
+<ul>
+<li>Add timestamp to every memory</li>
+<li>TTL for short-term facts</li>
+<li>Periodic cleanup of contradictions</li>
+<li>User can view + delete their memory</li>
+</ul>
+<h3 id="evals"><a class="anchor" href="#evals" aria-label="Link to section">#</a>Evals</h3>
+<p><strong>Q9: What&#39;s the difference between RAGAS Faithfulness and Context Precision?</strong></p>
+<ul>
+<li>Faithfulness: does the answer stay true to retrieved context?</li>
+<li>Context Precision: are the retrieved chunks actually relevant?</li>
+<li>Both can be low for different reasons</li>
+</ul>
+<p><strong>Q10: What&#39;s a golden dataset?</strong></p>
+<ul>
+<li>50-200 hand-curated (query, expected_answer) triples</li>
+<li>Use for regression testing, comparing prompt versions</li>
+<li>Keep in version control, update when product changes</li>
+</ul>
+<p><strong>Q11: How do you A/B test prompts in production?</strong></p>
+<ul>
+<li>Sticky bucket by user_id (hash % 100)</li>
+<li>5-10% on candidate</li>
+<li>Monitor: completion rate, user satisfaction, cost, latency</li>
+<li>Statistical significance: usually need 1k+ samples per variant</li>
+<li>Auto-rollback if candidate underperforms</li>
+</ul>
+<p><strong>Q12: What&#39;s LLM-as-judge? When to use? When not to?</strong></p>
+<ul>
+<li>Use: scale, consistency, custom criteria</li>
+<li>Not: objective facts (use code), safety (use classifiers)</li>
+<li>Always: use strong model (GPT-4o, Claude Opus) for judging</li>
+<li>Validate judge against human labels first</li>
+</ul>
+<h3 id="observability"><a class="anchor" href="#observability" aria-label="Link to section">#</a>Observability</h3>
+<p><strong>Q13: OpenTelemetry vs proprietary (LangSmith, Datadog)?</strong></p>
+<ul>
+<li>OTel: open standard, portable, vendor-neutral</li>
+<li>Proprietary: better UX, more AI-specific features</li>
+<li>Best: OTel for infra, AI-specific tool for LLM traces</li>
+</ul>
+<p><strong>Q14: What 5 things MUST be in every LLM trace?</strong></p>
+<ul>
+<li>Full prompt (with PII redacted)</li>
+<li>Full response</li>
+<li>Token count (input + output)</li>
+<li>Latency</li>
+<li>Cost</li>
+<li>Bonus: tool calls, retrieved docs, model version</li>
+</ul>
+<p><strong>Q15: How do you detect agent loops in production?</strong></p>
+<ul>
+<li>Track recent N actions in state</li>
+<li>If same tool + same args appears 3+ times in a row → loop</li>
+<li>Alert: loop_detected rate &gt; 1% of sessions</li>
+<li>Auto-stop + notify user</li>
+</ul>
+<h3 id="distributed-training-for-dataresearch-roles"><a class="anchor" href="#distributed-training-for-dataresearch-roles" aria-label="Link to section">#</a>Distributed Training (for data/research roles)</h3>
+<p><strong>Q16: What&#39;s the difference between data and tensor parallelism?</strong></p>
+<ul>
+<li>Data: same model, different data shards, average gradients</li>
+<li>Tensor: split one model across GPUs (split weight matrices)</li>
+</ul>
+<p><strong>Q17: What&#39;s FSDP?</strong></p>
+<ul>
+<li>Fully Sharded Data Parallel (PyTorch&#39;s native ZeRO-3)</li>
+<li>Shards model parameters, gradients, optimizer states across GPUs</li>
+<li>Memory scales linearly with number of GPUs</li>
+</ul>
+<p><strong>Q18: What&#39;s gradient checkpointing?</strong></p>
+<ul>
+<li>Don&#39;t store intermediate activations; recompute during backward</li>
+<li>Trade 30% speed for ~50% activation memory</li>
+</ul>
+<p><strong>Q19: Why bf16 over fp16?</strong></p>
+<ul>
+<li>bf16 has same range as fp32 (no overflow)</li>
+<li>fp16 has more precision but smaller range</li>
+<li>For training, bf16 is usually better</li>
+</ul>
+<p><strong>Q20: What&#39;s a learning rate warmup?</strong></p>
+<ul>
+<li>Start at 0, ramp to target over first N steps</li>
+<li>Prevents early large updates that can destabilize</li>
+</ul>
+<p><strong>Q21: What&#39;s ZeRO?</strong></p>
+<ul>
+<li>Zero Redundancy Optimizer (DeepSpeed)</li>
+<li>Stage 1: shard optimizer state</li>
+<li>Stage 2: shard gradients</li>
+<li>Stage 3: shard parameters</li>
+<li>Saves memory proportional to stage</li>
+</ul>
+<p><strong>Q22: What&#39;s gradient accumulation?</strong></p>
+<ul>
+<li>Update every K mini-batches instead of every batch</li>
+<li>Simulates larger effective batch size</li>
+<li>Useful when batch doesn&#39;t fit in memory</li>
+</ul>
+<p><strong>Q23: How do you debug a NaN loss?</strong></p>
+<ul>
+<li>Check for bad data (skip suspicious batches)</li>
+<li>Reduce learning rate</li>
+<li>Add gradient clipping</li>
+<li>Check for numerical issues (log of 0, divide by 0)</li>
+<li>Try mixed precision toggle (bf16 ↔ fp32)</li>
+</ul>
+<p><strong>Q24: What&#39;s sequence parallelism?</strong></p>
+<ul>
+<li>Sequence dimension split across GPUs</li>
+<li>Reduces activation memory for long sequences</li>
+<li>Often combined with tensor parallelism (Megatron&#39;s design)</li>
+</ul>
+<p><strong>Q25: How do you decide GPU count for training?</strong></p>
+<ul>
+<li>Model size in bytes × 4 (params + grads + optimizer + activations)</li>
+<li>Subtract what fits per GPU</li>
+<li>That&#39;s the minimum number</li>
+<li>Add 2-4x for overhead, parallelism strategy, OOM buffer</li>
+</ul>
+<h3 id="healthcare-ai"><a class="anchor" href="#healthcare-ai" aria-label="Link to section">#</a>Healthcare AI</h3>
+<p><strong>Q26: What is PHI under HIPAA?</strong></p>
+<ul>
+<li>Any individually identifiable health information</li>
+<li>18 identifiers must be removed (Safe Harbor)</li>
+<li>Names, dates, phone, SSN, MRN, etc.</li>
+</ul>
+<p><strong>Q27: How do you de-identify clinical text?</strong></p>
+<ul>
+<li>Regex for structured fields (SSN, phone)</li>
+<li>NER for names, locations</li>
+<li>Date shifting (preserve relative intervals)</li>
+<li>Philter, ClinPhen, or custom models</li>
+</ul>
+<p><strong>Q28: Why does healthcare AI need on-prem deployment?</strong></p>
+<ul>
+<li>HIPAA: data cannot leave hospital network</li>
+<li>BAA agreements with cloud are complex</li>
+<li>Some hospitals have no internet at all</li>
+<li>Patient consent for cloud processing unclear</li>
+</ul>
+<p><strong>Q29: What&#39;s the biggest risk in medical AI agents?</strong></p>
+<ul>
+<li>Wrong drug dose or interaction</li>
+<li>Missing critical info (false negative)</li>
+<li>Hallucinating citations</li>
+<li>Always include human-in-the-loop for clinical decisions</li>
+</ul>
+<p><strong>Q30: How do you evaluate medical AI?</strong></p>
+<ul>
+<li>Domain expert review (radiologist, MD)</li>
+<li>Gold standard comparison (real diagnoses)</li>
+<li>Subgroup analysis (does it work for all demographics?)</li>
+<li>Failure mode analysis (what does it miss?)</li>
+</ul>
+<h3 id="synthetic-data-rl"><a class="anchor" href="#synthetic-data-rl" aria-label="Link to section">#</a>Synthetic Data &amp; Rl</h3>
+<p><strong>Q31: What&#39;s self-play in LLM training?</strong></p>
+<ul>
+<li>Model generates problems + solutions</li>
+<li>Verifier checks correctness</li>
+<li>Correct samples added to training data</li>
+<li>Iterates</li>
+</ul>
+<p><strong>Q32: What&#39;s the difference between SFT and RLHF?</strong></p>
+<ul>
+<li>SFT: learn from (input, output) pairs</li>
+<li>RLHF: learn from preferences (output A &gt; B)</li>
+<li>SFT establishes format; RLHF refines quality</li>
+</ul>
+<p><strong>Q33: What&#39;s DPO vs PPO?</strong></p>
+<ul>
+<li>DPO: direct preference optimization, no reward model</li>
+<li>PPO: reinforcement learning with reward model</li>
+<li>DPO is simpler, more stable</li>
+<li>PPO can be more flexible</li>
+</ul>
+<p><strong>Q34: How do you prevent reward hacking?</strong></p>
+<ul>
+<li>Multiple reward signals (not just one)</li>
+<li>KL penalty (don&#39;t drift too far from base model)</li>
+<li>Periodic human audits</li>
+<li>Test on held-out distribution</li>
+</ul>
+<p><strong>Q35: What is process supervision vs outcome supervision?</strong></p>
+<ul>
+<li>Outcome: only final answer correct/incorrect</li>
+<li>Process: each step correct/incorrect</li>
+<li>Process: better signal but more expensive labeling</li>
+<li>Used in math reasoning (e.g., Math-Shepherd)</li>
+</ul>
+<h3 id="eval-frameworks-comparison"><a class="anchor" href="#eval-frameworks-comparison" aria-label="Link to section">#</a>Eval Frameworks Comparison</h3>
+<p><strong>Q36: RAGAS vs DeepEval vs Braintrust?</strong></p>
+<ul>
+<li>RAGAS: RAG-specific, easy</li>
+<li>DeepEval: general, many metrics, pytest-like</li>
+<li>Braintrust: production eval, A/B testing</li>
+<li>Choose based on stack</li>
+</ul>
+<p><strong>Q37: What is Phoenix (Arize)?</strong></p>
+<ul>
+<li>Open-source ML observability</li>
+<li>Embedding drift, LLM tracing</li>
+<li>Self-hostable, OpenTelemetry-native</li>
+</ul>
+<p><strong>Q38: What is LangSmith?</strong></p>
+<ul>
+<li>LangChain&#39;s commercial observability</li>
+<li>Tracing, evaluation, prompt hub</li>
+<li>Tight integration with LangChain/LangGraph</li>
+</ul>
+<h3 id="senior-staff-level-questions"><a class="anchor" href="#senior-staff-level-questions" aria-label="Link to section">#</a>Senior / Staff Level Questions</h3>
+<p><strong>Q39: How do you scale a team building AI products?</strong></p>
+<ul>
+<li>Clear eval framework (anyone can run evals)</li>
+<li>Shared prompt library (Prompt Hub)</li>
+<li>Templates for new use cases</li>
+<li>Code review standards</li>
+<li>&quot;AI engineer&quot; as a job family</li>
+</ul>
+<p><strong>Q40: How do you prioritize which AI features to build?</strong></p>
+<ul>
+<li>User impact × feasibility × strategic alignment</li>
+<li>Quick prototype first, measure usage</li>
+<li>Eval-driven: pick features you can measure</li>
+<li>Avoid &quot;AI for AI&#39;s sake&quot;</li>
+</ul>
+<p><strong>Q41: How do you handle disagreement between team on AI approach?</strong></p>
+<ul>
+<li>Spike it: 1-2 day prototype, compare on golden set</li>
+<li>Rely on data, not opinions</li>
+<li>ADR (architectural decision record) documents the choice</li>
+<li>Agree on the criteria before the spike</li>
+</ul>
+<p><strong>Q42: When do you say &quot;no&quot; to using an LLM?</strong></p>
+<ul>
+<li>Determinism required (regulatory)</li>
+<li>Latency &lt; 100ms needed</li>
+<li>Cost &gt; business value</li>
+<li>Risk of hallucination unacceptable</li>
+<li>Simple rule-based solution works</li>
+</ul>
+<p><strong>Q43: How do you handle AI bias in production?</strong></p>
+<ul>
+<li>Audit training data for representation</li>
+<li>Test on diverse subgroups</li>
+<li>Use bias metrics in eval suite</li>
+<li>Periodic human audits</li>
+<li>Document limitations honestly</li>
+</ul>
+<p><strong>Q44: What&#39;s your framework for choosing between fine-tuning and RAG?</strong></p>
+<ul>
+<li>Need knowledge not in base model → RAG</li>
+<li>Need specific style/format → Fine-tune</li>
+<li>Need both → RAG + fine-tune</li>
+<li>Static facts → Fine-tune (cheaper per call)</li>
+<li>Dynamic facts → RAG (always fresh)</li>
+</ul>
+<p><strong>Q45: How do you onboard a new engineer to your AI system?</strong></p>
+<ul>
+<li>Document architecture (diagrams, ADRs)</li>
+<li>Shared runbook for common operations</li>
+<li>Eval suite they can run locally</li>
+<li>Pair on first feature</li>
+<li>&quot;Read the handbook&quot; doc</li>
+</ul>
+<h3 id="production-failure-scenarios"><a class="anchor" href="#production-failure-scenarios" aria-label="Link to section">#</a>Production Failure Scenarios</h3>
+<p><strong>Q46: Your agent is making unauthorized purchases. How do you stop it?</strong></p>
+<ul>
+<li>Human-in-the-loop for any &quot;spend money&quot; tool</li>
+<li>Per-tenant spend caps</li>
+<li>Tool-level authorization (some tools require extra approval)</li>
+<li>Real-time monitoring with auto-shutoff</li>
+</ul>
+<p><strong>Q47: User reports the AI is &quot;scared&quot; to answer valid questions.</strong></p>
+<ul>
+<li>System prompt too restrictive (&quot;never discuss X, Y, Z&quot;)</li>
+<li>Reframe as positive (&quot;focus on...&quot; instead of &quot;avoid...&quot;)</li>
+<li>Test prompt with edge cases</li>
+<li>Reduce number of &quot;do not&quot; instructions</li>
+</ul>
+<p><strong>Q48: Two users in the same tenant see different answers for the same question.</strong></p>
+<ul>
+<li>Per-tenant cache not isolated</li>
+<li>Different A/B prompt versions assigned by user</li>
+<li>Time-of-day caching with different TTLs</li>
+<li>Check for personalization layer</li>
+</ul>
+<p><strong>Q49: Eval scores drop 10% overnight, no code change.</strong></p>
+<ul>
+<li>Model provider updated model version</li>
+<li>Data drift in user queries</li>
+<li>External knowledge base changed</li>
+<li>Pin model version, check provider notes</li>
+</ul>
+<p><strong>Q50: The cost of running the agent is 5x forecast.</strong></p>
+<ul>
+<li>Runaway agent loop (debug via traces)</li>
+<li>Prompt regression (used 10x more tokens)</li>
+<li>Model swap (someone changed deployment)</li>
+<li>Cache eviction (silently broken)</li>
+<li>Attack/abuse pattern</li>
+</ul>
+<hr>
+<h2 id="final-words"><a class="anchor" href="#final-words" aria-label="Link to section">#</a>Final Words</h2>
+<p>You now have:</p>
+<ul>
+<li>✅ Python fundamentals (decorators, lists/tuples, ML models)</li>
+<li>✅ Transformer architecture and LLM internals</li>
+<li>✅ 7 RAG strategies (basic + 6 advanced) with code</li>
+<li>✅ LangGraph mastery (state, nodes, edges, cycles, persistence)</li>
+<li>✅ Vector DB decision-making (Qdrant, Pinecone, Chroma, Atlas)</li>
+<li>✅ Cloud AI services (Azure OpenAI, Bedrock, Vertex)</li>
+<li>✅ Production GenAI (observability, eval, cost, latency)</li>
+<li>✅ 12 prompt techniques (zero-shot through LCEL)</li>
+<li>✅ Fine-tuning (LoRA, QLoRA, OpenAI)</li>
+<li>✅ Claude API, prompt caching, MCP</li>
+<li>✅ PII 5-layer defense with code</li>
+<li>✅ Cutting-edge 2025/2026 (o1/o3, MoE, quantization, Mamba)</li>
+<li>✅ 200+ rapid-fire Q&amp;A</li>
+<li>✅ 4 system design scenarios</li>
+<li>✅ Behavioral stories (STAR framework)</li>
+<li>✅ 90-second pitch</li>
+<li>✅ Cheat sheet for interview day</li>
+<li>✅ <strong>Agent reliability &amp; incident response</strong> (NEW)</li>
+<li>✅ <strong>MCP servers at scale</strong> with multi-tenant code (NEW)</li>
+<li>✅ <strong>Memory &amp; context engineering (working/short/long-term, Honcho)</strong> (NEW)</li>
+<li>✅ <strong>Evals infrastructure (RAGAS, DeepEval, Braintrust, LLM-as-judge)</strong> (NEW)</li>
+<li>✅ <strong>Observability stacks (OTel, Signoz, Datadog, LLM tracing)</strong> (NEW)</li>
+<li>✅ <strong>OAuth integration &amp; connector framework</strong> (NEW)</li>
+<li>✅ <strong>Tool design discipline (idempotency, retries, error handling)</strong> (NEW)</li>
+<li>✅ <strong>Multi-tenancy, audit trails, data isolation</strong> (NEW)</li>
+<li>✅ <strong>Healthcare AI (PHI, on-prem, multilingual Indian)</strong> (NEW)</li>
+<li>✅ <strong>Data strategy (synthetic data, deduplication, contamination, sandboxes)</strong> (NEW)</li>
+<li>✅ <strong>Distributed training (DDP, TP, PP, FSDP, ZeRO, Megatron-LM)</strong> (NEW)</li>
+<li>✅ <strong>Mixed precision, gradient checkpointing, training stability</strong> (NEW)</li>
+<li>✅ <strong>Synthetic data, RLHF/DPO, self-play, reward hacking</strong> (NEW)</li>
+<li>✅ <strong>50+ additional quick-fire Q&amp;A from JDs</strong> (NEW)</li>
+<li>✅ <strong>Prompt iteration workflow + safe rollback</strong> (NEW)</li>
+<li>✅ <strong>Streaming, cost, latency for live agent traffic</strong> (NEW)</li>
+</ul>
+<hr>

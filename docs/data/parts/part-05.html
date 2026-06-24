@@ -1,0 +1,227 @@
+<h1>Part 5: Vector Databases, Cloud AI, Full-Stack</h1>
+<h2 id="51-vector-database-decision-tree"><a class="anchor" href="#51-vector-database-decision-tree" aria-label="Link to section">#</a>5.1 Vector Database Decision Tree</h2>
+<pre><code>Existing MongoDB? → Atlas Vector Search
+Existing Postgres? → pgvector
+Need zero-ops + budget? → Pinecone
+Production scale + filtering + OSS? → Qdrant
+Just prototyping? → Chroma
+Multimodal at scale? → Qdrant or Milvus
+</code></pre>
+<h2 id="52-qdrant-deep-dive-production-favorite"><a class="anchor" href="#52-qdrant-deep-dive-production-favorite" aria-label="Link to section">#</a>5.2 Qdrant Deep Dive (Production Favorite)</h2>
+<h3 id="why-qdrant"><a class="anchor" href="#why-qdrant" aria-label="Link to section">#</a>Why Qdrant</h3>
+<ul>
+<li><strong>Written in Rust</strong> — fastest open-source vector DB</li>
+<li><strong>Excellent payload filtering</strong> — metadata-based search</li>
+<li><strong>Hybrid search native</strong> — dense + sparse with RRF</li>
+<li><strong>Quantization</strong> — scalar (int8), product (PQ), binary</li>
+<li><strong>Distributed mode</strong> — sharding and replication</li>
+<li><strong>Open source</strong> — no vendor lock-in</li>
+</ul>
+<h3 id="core-concepts"><a class="anchor" href="#core-concepts" aria-label="Link to section">#</a>Core Concepts</h3>
+<ul>
+<li><strong>Collections</strong> = like tables (vector + payload)</li>
+<li><strong>Points</strong> = individual records (id + vector + payload)</li>
+<li><strong>HNSW</strong> = graph-based ANN algorithm (default)</li>
+<li><strong>Payload</strong> = metadata for filtering</li>
+</ul>
+<h3 id="key-operations"><a class="anchor" href="#key-operations" aria-label="Link to section">#</a>Key Operations</h3>
+<pre><code class="language-python">from qdrant_client import QdrantClient
+from qdrant_client.models import PointStruct, VectorParams, Distance
+
+client = QdrantClient(host=&quot;localhost&quot;, port=6333)
+
+# Create collection
+client.create_collection(
+    collection_name=&quot;products&quot;,
+    vectors_config=VectorParams(size=1536, distance=Distance.COSINE),
+    quantization_config=QuantizationConfig(
+        scalar=ScalarQuantizationConfig(type=ScalarType.INT8)
+    )
+)
+
+# Insert points
+client.upsert(
+    collection_name=&quot;products&quot;,
+    points=[
+        PointStruct(
+            id=1,
+            vector=[0.1, 0.2, ...],  # 1536-dim
+            payload={&quot;category&quot;: &quot;furniture&quot;, &quot;price&quot;: 299}
+        )
+    ]
+)
+
+# Search with filter
+results = client.search(
+    collection_name=&quot;products&quot;,
+    query_vector=[0.1, 0.2, ...],
+    query_filter=Filter(must=[FieldCondition(key=&quot;category&quot;, match=MatchValue(value=&quot;furniture&quot;))]),
+    limit=10
+)
+</code></pre>
+<h2 id="53-hnsw-algorithm-hierarchical-navigable-small-world"><a class="anchor" href="#53-hnsw-algorithm-hierarchical-navigable-small-world" aria-label="Link to section">#</a>5.3 HNSW Algorithm (Hierarchical Navigable Small World)</h2>
+<h3 id="how-it-works"><a class="anchor" href="#how-it-works" aria-label="Link to section">#</a>How It Works</h3>
+<pre><code>Layer 2 (top):    few nodes, long-range connections
+Layer 1 (middle): more nodes, medium-range
+Layer 0 (bottom): all nodes, short-range connections
+
+Search: Start at top layer, greedily move to nearest neighbor, descend.
+</code></pre>
+<h3 id="tuning-parameters"><a class="anchor" href="#tuning-parameters" aria-label="Link to section">#</a>Tuning Parameters</h3>
+<ul>
+<li><code>m</code>: max connections per node (default 16, higher = better recall, more memory)</li>
+<li><code>ef_construction</code>: search width during indexing (default 100, higher = better index)</li>
+<li><code>ef</code>: search width at query time (default 20, higher = better recall, slower)</li>
+</ul>
+<hr>
+<h2 id="54-cloud-ai-services"><a class="anchor" href="#54-cloud-ai-services" aria-label="Link to section">#</a>5.4 Cloud AI Services</h2>
+<h3 id="azure-openai"><a class="anchor" href="#azure-openai" aria-label="Link to section">#</a>Azure OpenAI</h3>
+<ul>
+<li><strong>Auth</strong>: Azure AD (preferred) or API key</li>
+<li><strong>Content Safety</strong>: Built-in (hate, sexual, violence, self-harm)</li>
+<li><strong>Data residency</strong>: &quot;Your data is not used for training&quot; guarantee</li>
+<li><strong>Private endpoints</strong>: VNet integration</li>
+<li><strong>Compliance</strong>: HIPAA, SOC 2, ISO 27001, FedRAMP</li>
+<li><strong>AI Foundry</strong>: end-to-end platform (Prompt Flow, RAG Playground, Evaluation)</li>
+</ul>
+<h3 id="aws-bedrock"><a class="anchor" href="#aws-bedrock" aria-label="Link to section">#</a>Aws Bedrock</h3>
+<ul>
+<li><strong>Multi-model</strong>: Claude, Llama, Mistral, Titan, Cohere</li>
+<li><strong>A/B test</strong> models easily</li>
+<li><strong>Knowledge Bases</strong> (built-in RAG)</li>
+<li><strong>Agents</strong> (built-in agent framework)</li>
+<li><strong>Fine-tuning</strong> available for select models</li>
+</ul>
+<h3 id="google-vertex-ai"><a class="anchor" href="#google-vertex-ai" aria-label="Link to section">#</a>Google Vertex AI</h3>
+<ul>
+<li><strong>Gemini 1.5 Pro</strong>: 1M-2M token context (longest)</li>
+<li><strong>Multimodal</strong>: video, audio, image, text</li>
+<li><strong>Vector Search</strong> built-in</li>
+<li><strong>Agent Builder</strong> with grounding</li>
+</ul>
+<h3 id="decision-matrix"><a class="anchor" href="#decision-matrix" aria-label="Link to section">#</a>Decision Matrix</h3>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Choose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Azure AD, compliance, MS ecosystem</td>
+<td>Azure OpenAI</td>
+</tr>
+<tr>
+<td>Multi-model A/B testing</td>
+<td>AWS Bedrock</td>
+</tr>
+<tr>
+<td>Multimodal (video, audio, 1M context)</td>
+<td>Vertex AI</td>
+</tr>
+<tr>
+<td>Cheapest</td>
+<td>OpenAI direct (no markup)</td>
+</tr>
+</tbody></table>
+<h3 id="cost-cheatsheet"><a class="anchor" href="#cost-cheatsheet" aria-label="Link to section">#</a>Cost Cheatsheet</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Input $/1M</th>
+<th>Output $/1M</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GPT-4o</td>
+<td>$5</td>
+<td>$15</td>
+<td>Complex reasoning</td>
+</tr>
+<tr>
+<td>GPT-4o mini</td>
+<td>$0.15</td>
+<td>$0.60</td>
+<td>Default for 80%</td>
+</tr>
+<tr>
+<td>Claude 3.5 Sonnet</td>
+<td>$3</td>
+<td>$15</td>
+<td>Coding, analysis</td>
+</tr>
+<tr>
+<td>Gemini 1.5 Pro</td>
+<td>$3.50</td>
+<td>$10.50</td>
+<td>Multimodal, long context</td>
+</tr>
+<tr>
+<td>text-embedding-3-small</td>
+<td>$0.02</td>
+<td>-</td>
+<td>Embeddings default</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="55-full-stack-architecture"><a class="anchor" href="#55-full-stack-architecture" aria-label="Link to section">#</a>5.5 Full-Stack Architecture</h2>
+<h3 id="the-stack"><a class="anchor" href="#the-stack" aria-label="Link to section">#</a>The Stack</h3>
+<pre><code>┌─────────────────────────────────────────────┐
+│  Frontend (NextJS + React + TypeScript)     │
+│  MSAL (Azure AD auth), Vercel AI SDK        │
+└──────────────────┬──────────────────────────┘
+                   │ Streaming (SSE) / WebSocket
+                   ▼
+┌─────────────────────────────────────────────┐
+│  Backend (FastAPI + Python)                 │
+│  Async, Pydantic validation, OpenTelemetry  │
+└──────────────────┬──────────────────────────┘
+                   │ LCEL / LangGraph
+                   ▼
+┌─────────────────────────────────────────────┐
+│  Orchestration (LangGraph)                  │
+│  Checkpointer (Postgres), Human-in-loop     │
+└──────────────────┬──────────────────────────┘
+                   │
+        ┌──────────┼──────────┬────────────┐
+        ▼          ▼          ▼            ▼
+    LLM APIs   Vector DB   SQL DB      Cache
+   (Azure)    (Qdrant)   (Postgres)   (Redis)
+        │
+        ▼
+   Observability (LangSmith)
+</code></pre>
+<h3 id="fastapi-streaming"><a class="anchor" href="#fastapi-streaming" aria-label="Link to section">#</a>FastAPI Streaming</h3>
+<pre><code class="language-python">from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from langchain_openai import ChatOpenAI
+
+app = FastAPI()
+llm = ChatOpenAI(model=&quot;gpt-4o-mini&quot;)
+
+@app.post(&quot;/chat/stream&quot;)
+async def stream(query: str):
+    async def generate():
+        async for chunk in llm.astream(query):
+            yield f&quot;data: {chunk.content}\n\n&quot;
+    return StreamingResponse(generate(), media_type=&quot;text/event-stream&quot;)
+</code></pre>
+<h3 id="react-frontend-vercel-ai-sdk"><a class="anchor" href="#react-frontend-vercel-ai-sdk" aria-label="Link to section">#</a>React Frontend (Vercel AI SDK)</h3>
+<pre><code class="language-typescript">import { useChat } from &#39;ai/react&#39;;
+
+export default function Chat() {
+  const { messages, input, handleSubmit } = useChat({ api: &#39;/api/chat&#39; });
+
+  return (
+    &lt;div&gt;
+      {messages.map(m =&gt; &lt;div key={m.id}&gt;{m.content}&lt;/div&gt;)}
+      &lt;form onSubmit={handleSubmit}&gt;
+        &lt;input value={input} onChange={...} /&gt;
+      &lt;/form&gt;
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+<hr>

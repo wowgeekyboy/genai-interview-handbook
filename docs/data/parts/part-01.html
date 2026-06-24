@@ -1,0 +1,388 @@
+<h1>Part 1: Python &amp; ML Fundamentals</h1>
+<h2 id="11-python-decorators-asked-in-80-of-interviews"><a class="anchor" href="#11-python-decorators-asked-in-80-of-interviews" aria-label="Link to section">#</a>1.1 Python Decorators (Asked in 80% of Interviews)</h2>
+<h3 id="the-concept"><a class="anchor" href="#the-concept" aria-label="Link to section">#</a>The Concept</h3>
+<p>A decorator is a function that takes another function and extends its behavior without modifying the source. Decorators are everywhere in AI/LLM frameworks — <code>@traceable</code> (LangSmith), <code>@tool</code> (LangChain), <code>@app.post(&quot;/chat&quot;)</code> (FastAPI).</p>
+<h3 id="the-4-decorator-patterns-you-must-know"><a class="anchor" href="#the-4-decorator-patterns-you-must-know" aria-label="Link to section">#</a>The 4 Decorator Patterns You Must Know</h3>
+<pre><code class="language-python"># ─────────────────────────────────────────────────────────
+# Pattern 1: Basic decorator (no arguments)
+# ─────────────────────────────────────────────────────────
+def my_decorator(func):
+    def wrapper(*args, **kwargs):
+        print(f&quot;Calling {func.__name__}&quot;)
+        result = func(*args, **kwargs)
+        print(f&quot;Done with {func.__name__}&quot;)
+        return result
+    return wrapper
+
+@my_decorator
+def say_hello(name):
+    return f&quot;Hello, {name}&quot;
+
+print(say_hello(&quot;Alice&quot;))
+# Output:
+# Calling say_hello
+# Done with say_hello
+# Hello, Alice
+
+
+# ─────────────────────────────────────────────────────────
+# Pattern 2: Decorator with arguments
+# ─────────────────────────────────────────────────────────
+def repeat(times):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for _ in range(times):
+                result = func(*args, **kwargs)
+            return result
+        return wrapper
+    return decorator
+
+@repeat(3)
+def greet(name):
+    print(f&quot;Hi {name}&quot;)
+
+greet(&quot;Bob&quot;)
+# Output: Hi Bob (3 times)
+
+
+# ─────────────────────────────────────────────────────────
+# Pattern 3: Class-based decorator (stateful)
+# ─────────────────────────────────────────────────────────
+class CountCalls:
+    def __init__(self, func):
+        self.func = func
+        self.count = 0
+
+    def __call__(self, *args, **kwargs):
+        self.count += 1
+        print(f&quot;Call #{self.count} of {self.func.__name__}&quot;)
+        return self.func(*args, **kwargs)
+
+@CountCalls
+def process_query(q):
+    return f&quot;Processed: {q}&quot;
+
+process_query(&quot;test1&quot;)
+process_query(&quot;test2&quot;)
+# Output:
+# Call #1 of process_query
+# Call #2 of process_query
+
+
+# ─────────────────────────────────────────────────────────
+# Pattern 4: functools.wraps (preserves metadata)
+# ─────────────────────────────────────────────────────────
+from functools import wraps
+
+def timing_decorator(func):
+    @wraps(func)  # ← This preserves func.__name__, __doc__, etc.
+    def wrapper(*args, **kwargs):
+        import time
+        start = time.time()
+        result = func(*args, **kwargs)
+        print(f&quot;{func.__name__} took {time.time() - start:.2f}s&quot;)
+        return result
+    return wrapper
+
+@timing_decorator
+def expensive_op():
+    &quot;&quot;&quot;Does something expensive.&quot;&quot;&quot;
+    return sum(range(10_000_000))
+
+print(expensive_op.__name__)  # &#39;expensive_op&#39; (preserved!)
+print(expensive_op.__doc__)   # &#39;Does something expensive.&#39; (preserved!)
+</code></pre>
+<h3 id="real-production-decorators-youll-see"><a class="anchor" href="#real-production-decorators-youll-see" aria-label="Link to section">#</a>Real Production Decorators You&#39;ll See</h3>
+<pre><code class="language-python"># LangSmith tracing
+from langsmith import traceable
+
+@traceable(name=&quot;rag_query&quot;, tags=[&quot;production&quot;, &quot;v2&quot;])
+def rag_pipeline(question: str) -&gt; str:
+    docs = retrieve(question)
+    return generate(docs, question)
+
+# LangChain tool definition
+from langchain.tools import tool
+
+@tool
+def get_weather(city: str) -&gt; str:
+    &quot;&quot;&quot;Get current weather for a city.&quot;&quot;&quot;
+    return weather_api(city)
+
+# FastAPI endpoint
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.post(&quot;/chat&quot;)
+async def chat(message: str):
+    return {&quot;response&quot;: rag_pipeline(message)}
+</code></pre>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;Decorators wrap a function to add behavior without changing source. I&#39;ve used them for <strong>tracing</strong> (<code>@traceable</code>), <strong>caching</strong> (<code>@lru_cache</code>), <strong>authorization</strong> (<code>@require_role</code>), <strong>logging</strong>, and <strong>retry</strong>. The four patterns I know: no-args, with-args, class-based for state, and <code>functools.wraps</code> to preserve the wrapped function&#39;s metadata. In LangChain I use <code>@tool</code> to expose Python functions as agent-callable tools — the decorator adds a schema that the LLM uses to decide when to call the function.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="12-lists-vs-tuples-asked-constantly"><a class="anchor" href="#12-lists-vs-tuples-asked-constantly" aria-label="Link to section">#</a>1.2 Lists vs Tuples (Asked Constantly)</h2>
+<h3 id="the-comparison-table"><a class="anchor" href="#the-comparison-table" aria-label="Link to section">#</a>The Comparison Table</h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>List</th>
+<th>Tuple</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Syntax</strong></td>
+<td><code>[1, 2, 3]</code></td>
+<td><code>(1, 2, 3)</code></td>
+</tr>
+<tr>
+<td><strong>Mutability</strong></td>
+<td>✅ Mutable</td>
+<td>❌ Immutable</td>
+</tr>
+<tr>
+<td><strong>Performance</strong></td>
+<td>Slower</td>
+<td>Faster</td>
+</tr>
+<tr>
+<td><strong>Memory</strong></td>
+<td>~64 bytes/element overhead</td>
+<td>~48 bytes</td>
+</tr>
+<tr>
+<td><strong>Use as dict key</strong></td>
+<td>❌ No</td>
+<td>✅ Yes (hashable)</td>
+</tr>
+<tr>
+<td><strong>Use case</strong></td>
+<td>Collections that change</td>
+<td>Fixed records</td>
+</tr>
+</tbody></table>
+<h3 id="why-tuples-are-faster"><a class="anchor" href="#why-tuples-are-faster" aria-label="Link to section">#</a>Why Tuples Are Faster</h3>
+<pre><code class="language-python">import sys
+my_list = [1, 2, 3, 4, 5]
+my_tuple = (1, 2, 3, 4, 5)
+
+print(sys.getsizeof(my_list))   # 104 bytes
+print(sys.getsizeof(my_tuple))  # 80 bytes
+</code></pre>
+<h3 id="tuple-indexing-unpacking"><a class="anchor" href="#tuple-indexing-unpacking" aria-label="Link to section">#</a>Tuple Indexing &amp; Unpacking</h3>
+<pre><code class="language-python"># Indexing
+point = (10, 20, 30)
+print(point[0])     # 10
+print(point[-1])    # 30
+
+# Slicing
+print(point[0:2])   # (10, 20)
+
+# Unpacking
+x, y, z = point
+print(x, y, z)      # 10 20 30
+
+# Extended unpacking
+first, *rest = (1, 2, 3, 4, 5)
+print(first)        # 1
+print(rest)         # [2, 3, 4, 5]
+
+# Function returns (idiomatic)
+def get_user():
+    return &quot;Alice&quot;, 30, &quot;NYC&quot;  # ← Implicit tuple
+
+name, age, city = get_user()
+</code></pre>
+<h3 id="when-to-use-each"><a class="anchor" href="#when-to-use-each" aria-label="Link to section">#</a>When to Use Each</h3>
+<ul>
+<li><strong>Lists</strong>: User data, query results, anything that grows/shrinks</li>
+<li><strong>Tuples</strong>: Records (RGB color, DB row, dictionary key), function returns, fixed configuration</li>
+</ul>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;I use lists when the collection will change and tuples when it&#39;s a fixed record. Tuples are immutable so they&#39;re hashable — can be dict keys — and they&#39;re faster with less memory. In RAG systems I store retrieved chunks as <code>(doc_id, score, content)</code> tuples because the tuple represents one immutable search result. For function returns that bundle multiple values, I always return tuples and unpack at the call site.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="13-how-ml-models-are-generated-the-full-pipeline"><a class="anchor" href="#13-how-ml-models-are-generated-the-full-pipeline" aria-label="Link to section">#</a>1.3 How ML Models Are Generated (The Full Pipeline)</h2>
+<h3 id="the-7-stages"><a class="anchor" href="#the-7-stages" aria-label="Link to section">#</a>The 7 Stages</h3>
+<pre><code>┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│ 1. Define    │───►│ 2. Collect   │───►│ 3. Clean &amp;   │
+│    Problem   │    │    Data      │    │    Prepare   │
+└──────────────┘    └──────────────┘    └──────────────┘
+                                               │
+                                               ▼
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│ 7. Monitor &amp; │◄───│ 6. Deploy    │◄───│ 5. Evaluate  │
+│    Improve   │    │    &amp; Serve   │    │    &amp; Tune    │
+└──────────────┘    └──────────────┘    └──────────────┘
+                       ▲
+                       │
+                  ┌──────────────┐
+                  │ 4. Train     │
+                  │    Model     │
+                  └──────────────┘
+</code></pre>
+<h3 id="stage-by-stage-detail"><a class="anchor" href="#stage-by-stage-detail" aria-label="Link to section">#</a>Stage-by-Stage Detail</h3>
+<p><strong>Stage 1: Problem Definition</strong></p>
+<ul>
+<li>What are we predicting? (Classification? Regression? Clustering? Generation?)</li>
+<li>What&#39;s the success metric? (Accuracy? Latency? Revenue impact?)</li>
+<li>What&#39;s the baseline? (Random? Human? Existing system?)</li>
+</ul>
+<p><strong>Stage 2: Data Collection</strong></p>
+<ul>
+<li>Sources: Database, APIs, logs, scraping, user-generated</li>
+<li>Volume: 100 examples for simple, 100k+ for deep learning</li>
+<li>Labeling: Manual, crowdsourced, programmatic (weak supervision)</li>
+</ul>
+<p><strong>Stage 3: Cleaning &amp; Preparation</strong></p>
+<ul>
+<li>Handle missing values (impute or drop)</li>
+<li>Remove duplicates</li>
+<li>Normalize/standardize (for distance-based models)</li>
+<li>Encode categoricals (one-hot, label, target)</li>
+<li>Train/val/test split (70/15/15 typical)</li>
+</ul>
+<p><strong>Stage 4: Model Training</strong></p>
+<ul>
+<li>Choose algorithm (linear, tree, neural net, transformer)</li>
+<li>Set hyperparameters</li>
+<li>Train on training set, tune on validation set</li>
+<li>Cross-validation for small datasets</li>
+</ul>
+<p><strong>Stage 5: Evaluation</strong></p>
+<ul>
+<li>Classification: Accuracy, Precision, Recall, F1, AUC-ROC</li>
+<li>Regression: MSE, MAE, R²</li>
+<li>Generation: BLEU, ROUGE, BERTScore, RAGAS (for RAG)</li>
+<li>Test on held-out test set</li>
+</ul>
+<p><strong>Stage 6: Deployment</strong></p>
+<ul>
+<li>Serialize model (pickle, ONNX, TorchScript)</li>
+<li>Wrap in API (FastAPI, Flask)</li>
+<li>Containerize (Docker)</li>
+<li>Deploy (Kubernetes, serverless)</li>
+<li>Set up monitoring</li>
+</ul>
+<p><strong>Stage 7: Monitoring &amp; Iteration</strong></p>
+<ul>
+<li>Track data drift (input distribution changes)</li>
+<li>Track concept drift (relationship between input and output changes)</li>
+<li>A/B test new model versions</li>
+<li>Retrain periodically or trigger on drift</li>
+</ul>
+<h3 id="ml-model-types-quick-reference"><a class="anchor" href="#ml-model-types-quick-reference" aria-label="Link to section">#</a>ML Model Types (Quick Reference)</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Task</th>
+<th>Algorithms</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Regression</strong></td>
+<td>Predict continuous value</td>
+<td>Linear Regression, XGBoost</td>
+</tr>
+<tr>
+<td><strong>Classification</strong></td>
+<td>Predict category</td>
+<td>Logistic Regression, Random Forest, SVM, Neural Net</td>
+</tr>
+<tr>
+<td><strong>Clustering</strong></td>
+<td>Group similar items</td>
+<td>K-Means, DBSCAN, Hierarchical</td>
+</tr>
+<tr>
+<td><strong>Dimensionality Reduction</strong></td>
+<td>Reduce features</td>
+<td>PCA, t-SNE, UMAP</td>
+</tr>
+<tr>
+<td><strong>Generation</strong></td>
+<td>Create new content</td>
+<td>VAE, GAN, Transformer (LLM, Diffusion)</td>
+</tr>
+</tbody></table>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;An ML model is generated through a 7-stage pipeline: problem definition, data collection, cleaning, training, evaluation, deployment, and monitoring. For LLMs specifically, the same pipeline applies at much larger scale — billions of parameters trained on trillions of tokens. In production, I&#39;ve worked mostly with stage 6 onward — taking pre-trained models, fine-tuning or RAG-augmenting them, deploying, and monitoring. The key shift from classical ML to LLMs is that the model is general-purpose and you don&#39;t need to train from scratch; you adapt it with prompts or fine-tuning.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="14-ml-vs-llm-the-critical-distinction"><a class="anchor" href="#14-ml-vs-llm-the-critical-distinction" aria-label="Link to section">#</a>1.4 ML vs LLM — The Critical Distinction</h2>
+<h3 id="the-comparison"><a class="anchor" href="#the-comparison" aria-label="Link to section">#</a>The Comparison</h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Traditional ML</th>
+<th>LLM</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Task scope</strong></td>
+<td>One task per model</td>
+<td>Multi-task (general)</td>
+</tr>
+<tr>
+<td><strong>Training data</strong></td>
+<td>Thousands of labeled examples</td>
+<td>Trillions of tokens (mostly unlabeled)</td>
+</tr>
+<tr>
+<td><strong>Model size</strong></td>
+<td>KB to MB</td>
+<td>GB to TB</td>
+</tr>
+<tr>
+<td><strong>Compute to train</strong></td>
+<td>Minutes to hours</td>
+<td>Thousands of GPU-years</td>
+</tr>
+<tr>
+<td><strong>Adaptation</strong></td>
+<td>Retrain on new data</td>
+<td>Prompting or fine-tuning</td>
+</tr>
+<tr>
+<td><strong>Examples</strong></td>
+<td>Spam classifier, fraud detection, image classifier</td>
+<td>GPT-4o, Claude, Llama, Gemini</td>
+</tr>
+</tbody></table>
+<h3 id="why-llms-are-different"><a class="anchor" href="#why-llms-are-different" aria-label="Link to section">#</a>Why LLMs Are Different</h3>
+<p><strong>Traditional ML</strong> = specialist: train one model per task</p>
+<ul>
+<li>Spam classifier: trained on emails labeled spam/not-spam</li>
+<li>Sentiment analyzer: trained on movie reviews labeled positive/negative</li>
+<li>Need a new task? Train a new model.</li>
+</ul>
+<p><strong>LLMs</strong> = generalist: one model, many tasks</p>
+<ul>
+<li>Same model translates, summarizes, codes, reasons, classifies</li>
+<li>You &quot;program&quot; it with prompts, not retraining</li>
+<li>Knowledge is baked into the weights (parametric memory)</li>
+</ul>
+<h3 id="what-this-means-for-production"><a class="anchor" href="#what-this-means-for-production" aria-label="Link to section">#</a>What This Means for Production</h3>
+<pre><code>Traditional ML Pattern:
+  Task → Collect labeled data → Train → Deploy
+
+LLM Pattern (Prompting):
+  Task → Write prompt → Call API → Done
+
+LLM Pattern (RAG):
+  Task → Build knowledge base → Retrieve relevant docs → Augment prompt → Call LLM
+
+LLM Pattern (Fine-Tuning):
+  Task → Collect 500+ examples → Fine-tune → Deploy custom model
+</code></pre>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;The fundamental difference is <strong>scope</strong>. Traditional ML models are specialists — one model, one task, requires labeled training data per task. LLMs are generalists — one model handles hundreds of tasks via prompts, trained on massive unlabeled text corpora. In production, I rarely train classical ML from scratch anymore; instead I use LLMs with RAG for knowledge tasks and fine-tuning for format/style tasks. The economics flipped: classical ML was compute-cheap at inference but expensive to adapt; LLMs are compute-expensive per call but cheap to adapt via prompting.&quot;</p>
+</blockquote>
+<hr>

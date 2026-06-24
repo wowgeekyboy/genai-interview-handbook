@@ -1,0 +1,364 @@
+<h1>Part 9: System Design + Cheat Sheet</h1>
+<h2 id="91-system-design-scenarios"><a class="anchor" href="#91-system-design-scenarios" aria-label="Link to section">#</a>9.1 System Design Scenarios</h2>
+<h3 id="scenario-1-customer-support-chatbot"><a class="anchor" href="#scenario-1-customer-support-chatbot" aria-label="Link to section">#</a>Scenario 1: Customer Support Chatbot</h3>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>10k queries/day, &lt; 2s response time</li>
+<li>Multi-turn memory</li>
+<li>Integrates with order DB, knowledge base</li>
+<li>95% answer accuracy</li>
+</ul>
+<p><strong>Architecture:</strong></p>
+<pre><code>User → Web/Mobile App
+  ↓
+FastAPI Gateway (rate limit, auth)
+  ↓
+LangGraph Orchestrator
+  ├── Classifier (which intent?)
+  ├── RAG Pipeline (knowledge base)
+  ├── Tool: Order Lookup (SQL)
+  ├── Tool: Create Ticket (Zendesk API)
+  └── Response Generator
+  ↓
+Stream back to user
+  ↓
+Observability (LangSmith)
+</code></pre>
+<p><strong>Key decisions:</strong></p>
+<ul>
+<li>Azure OpenAI GPT-4o-mini (cost)</li>
+<li>Qdrant for knowledge base</li>
+<li>Postgres for order data</li>
+<li>Redis for session memory</li>
+<li>LangGraph for orchestration</li>
+</ul>
+<hr>
+<h3 id="scenario-2-iot-anomaly-detection-dashboard"><a class="anchor" href="#scenario-2-iot-anomaly-detection-dashboard" aria-label="Link to section">#</a>Scenario 2: IOT Anomaly Detection Dashboard</h3>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>100k sensors reporting every 5s</li>
+<li>Detect anomalies in real-time</li>
+<li>Send alerts via SMS</li>
+<li>Explain anomalies to non-technical users</li>
+</ul>
+<p><strong>Architecture:</strong></p>
+<pre><code>MQTT Broker (100k sensors)
+  ↓
+Stream Processing (Azure Stream Analytics)
+  ↓
+Anomaly Detection (statistical + ML model)
+  ↓
+  ├── Trigger: Alert Queue
+  │     ↓
+  │   LLM Explanation
+  │     ↓
+  │   Twilio SMS
+  │
+  └── Store: Time-series DB (InfluxDB)
+        ↓
+      Grafana Dashboard
+</code></pre>
+<p><strong>Key decisions:</strong></p>
+<ul>
+<li>MQTT for IoT pub/sub</li>
+<li>Streaming for real-time</li>
+<li>LLM for human-readable explanations</li>
+<li>Twilio for SMS alerts</li>
+</ul>
+<hr>
+<h3 id="scenario-3-contract-review-assistant"><a class="anchor" href="#scenario-3-contract-review-assistant" aria-label="Link to section">#</a>Scenario 3: Contract Review Assistant</h3>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>Lawyers upload contracts (PDF)</li>
+<li>Extract key terms (parties, dates, obligations)</li>
+<li>Flag risky clauses</li>
+<li>Q&amp;A over contract</li>
+</ul>
+<p><strong>Architecture:</strong></p>
+<pre><code>Lawyer uploads PDF
+  ↓
+Document Processing (Unstructured.io)
+  ↓
+  ├── Chunk + Embed → Vector DB (Qdrant)
+  └── Extract Entities → Structured DB
+  ↓
+LLM Analysis
+  ├── Clause Classification (risky?)
+  ├── Entity Extraction (parties, dates)
+  └── Summary Generation
+  ↓
+UI: Side-by-side view, highlighted clauses, citations
+</code></pre>
+<p><strong>Key decisions:</strong></p>
+<ul>
+<li>Document-specific chunking (per section)</li>
+<li>Hybrid retrieval (semantic + keyword for legal terms)</li>
+<li>Citations required for every claim</li>
+<li>Human review before final</li>
+</ul>
+<hr>
+<h3 id="scenario-4-enterprise-knowledge-base-100k-docs"><a class="anchor" href="#scenario-4-enterprise-knowledge-base-100k-docs" aria-label="Link to section">#</a>Scenario 4: Enterprise Knowledge Base (100k docs)</h3>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>100k+ documents (PDFs, wikis, Slack)</li>
+<li>Natural language Q&amp;A</li>
+<li>Citations</li>
+<li>Multi-tenant (different departments)</li>
+</ul>
+<p><strong>Architecture:</strong></p>
+<pre><code>Ingestion Pipeline:
+  Sources (SharePoint, Confluence, Slack)
+    ↓
+  Document Loaders (format-specific)
+    ↓
+  Chunking (recursive + semantic)
+    ↓
+  Embedding (batch)
+    ↓
+  Qdrant (per-tenant collections)
+
+Query Pipeline:
+  User Query
+    ↓
+  LangGraph (Adaptive RAG)
+    ├── Route by query type
+    ├── Hybrid retrieval (dense + BM25)
+    ├── Re-rank (cross-encoder)
+    └── Generate with citations
+    ↓
+  Response with source links
+</code></pre>
+<p><strong>Key decisions:</strong></p>
+<ul>
+<li>Tenant isolation (separate collections)</li>
+<li>Hybrid search for precision</li>
+<li>Adaptive RAG for query routing</li>
+<li>Citations mandatory</li>
+</ul>
+<hr>
+<h2 id="92-system-design-framework-use-this-every-time"><a class="anchor" href="#92-system-design-framework-use-this-every-time" aria-label="Link to section">#</a>9.2 System Design Framework (Use This Every Time)</h2>
+<h3 id="step-1-clarify-requirements"><a class="anchor" href="#step-1-clarify-requirements" aria-label="Link to section">#</a>Step 1: Clarify Requirements</h3>
+<ul>
+<li>Users: How many? Concurrent?</li>
+<li>Latency: p50, p99 targets?</li>
+<li>Scale: QPS, data volume?</li>
+<li>Compliance: HIPAA, PCI, GDPR?</li>
+</ul>
+<h3 id="step-2-high-level-architecture"><a class="anchor" href="#step-2-high-level-architecture" aria-label="Link to section">#</a>Step 2: High-Level Architecture</h3>
+<pre><code>[Clients] → [API Gateway] → [App Servers] → [Data Layer]
+              ↓                    ↓
+         [Auth]              [LLM/AI Services]
+                                  ↓
+                            [Observability]
+</code></pre>
+<h3 id="step-3-specific-tech-choices"><a class="anchor" href="#step-3-specific-tech-choices" aria-label="Link to section">#</a>Step 3: Specific Tech Choices</h3>
+<ul>
+<li>LLM: GPT-4o, Claude, Gemini (justify)</li>
+<li>Orchestration: LangGraph vs raw API</li>
+<li>Vector DB: Qdrant, pgvector, Pinecone</li>
+<li>Data: Postgres, MongoDB, Redis</li>
+<li>Frontend: React, NextJS</li>
+<li>Backend: FastAPI, Node.js</li>
+</ul>
+<h3 id="step-4-production-concerns"><a class="anchor" href="#step-4-production-concerns" aria-label="Link to section">#</a>Step 4: Production Concerns</h3>
+<ul>
+<li>Observability (LangSmith)</li>
+<li>Evaluation (RAGAS)</li>
+<li>Cost (model cascading, caching)</li>
+<li>Latency (streaming, parallelism)</li>
+<li>Security (PII, prompt injection)</li>
+</ul>
+<h3 id="step-5-trade-offs"><a class="anchor" href="#step-5-trade-offs" aria-label="Link to section">#</a>Step 5: Trade-offs</h3>
+<ul>
+<li>Cost vs Quality</li>
+<li>Latency vs Recall</li>
+<li>Flexibility vs Determinism</li>
+<li>Freshness vs Cost</li>
+<li>Build vs Buy</li>
+</ul>
+<hr>
+<h2 id="93-the-ultimate-cheat-sheet-10-minute-final-read"><a class="anchor" href="#93-the-ultimate-cheat-sheet-10-minute-final-read" aria-label="Link to section">#</a>9.3 The Ultimate Cheat Sheet (10-Minute Final Read)</h2>
+<h3 id="the-5-architecture-patterns-to-memorize"><a class="anchor" href="#the-5-architecture-patterns-to-memorize" aria-label="Link to section">#</a>The 5 Architecture Patterns to Memorize</h3>
+<ol>
+<li><strong>RAG</strong>: Embed → Retrieve → Augment → Generate</li>
+<li><strong>Agentic RAG</strong>: Agent + tools + iterative reasoning</li>
+<li><strong>Multi-Agent</strong>: Supervisor + workers, message passing</li>
+<li><strong>LangGraph</strong>: Stateful graph with cycles + persistence</li>
+<li><strong>Self-RAG</strong>: Reflection with critique tokens</li>
+</ol>
+<h3 id="the-5-trade-offs-always-mention"><a class="anchor" href="#the-5-trade-offs-always-mention" aria-label="Link to section">#</a>The 5 Trade-offs (Always Mention)</h3>
+<ol>
+<li><strong>Cost vs Quality</strong>: Bigger model = better but expensive</li>
+<li><strong>Latency vs Recall</strong>: More chunks = better recall but slower</li>
+<li><strong>Context vs Focus</strong>: Long context = comprehensive but loses focus</li>
+<li><strong>Flexibility vs Determinism</strong>: Agents vs chains</li>
+<li><strong>Freshness vs Cost</strong>: Real-time retrieval vs pre-computed</li>
+</ol>
+<h3 id="the-5-production-concerns-always-address"><a class="anchor" href="#the-5-production-concerns-always-address" aria-label="Link to section">#</a>The 5 Production Concerns (Always Address)</h3>
+<ol>
+<li><strong>Observability</strong>: Tracing, logs, metrics</li>
+<li><strong>Evaluation</strong>: Quality, faithfulness, relevance</li>
+<li><strong>Cost</strong>: Token usage, caching, model selection</li>
+<li><strong>Latency</strong>: Streaming, parallelism, caching</li>
+<li><strong>Safety</strong>: Guardrails, PII, content filtering</li>
+</ol>
+<h3 id="the-cost-cheatsheet"><a class="anchor" href="#the-cost-cheatsheet" aria-label="Link to section">#</a>The Cost Cheatsheet</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Input $/1M</th>
+<th>Output $/1M</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GPT-4o</td>
+<td>$5</td>
+<td>$15</td>
+<td>Complex reasoning</td>
+</tr>
+<tr>
+<td>GPT-4o mini</td>
+<td>$0.15</td>
+<td>$0.60</td>
+<td>Default 80%</td>
+</tr>
+<tr>
+<td>Claude 3.5 Sonnet</td>
+<td>$3</td>
+<td>$15</td>
+<td>Coding, analysis</td>
+</tr>
+<tr>
+<td>Gemini 1.5 Pro</td>
+<td>$3.50</td>
+<td>$10.50</td>
+<td>Multimodal, long</td>
+</tr>
+<tr>
+<td>text-embedding-3-small</td>
+<td>$0.02</td>
+<td>-</td>
+<td>Embeddings</td>
+</tr>
+</tbody></table>
+<h3 id="ragas-metrics-memorize"><a class="anchor" href="#ragas-metrics-memorize" aria-label="Link to section">#</a>RAGAS Metrics (Memorize)</h3>
+<ul>
+<li><strong>Faithfulness</strong> — answer supported by context?</li>
+<li><strong>Answer Relevancy</strong> — answers the question?</li>
+<li><strong>Context Precision</strong> — retrieved chunks relevant?</li>
+<li><strong>Context Recall</strong> — retrieved all needed info?</li>
+</ul>
+<h3 id="vector-db-decision"><a class="anchor" href="#vector-db-decision" aria-label="Link to section">#</a>Vector Db Decision</h3>
+<pre><code>Existing MongoDB → Atlas Vector Search
+Existing Postgres → pgvector
+Zero-ops + budget → Pinecone
+Production + filtering + OSS → Qdrant
+Prototyping → Chroma
+</code></pre>
+<h3 id="langgraph-5-concepts"><a class="anchor" href="#langgraph-5-concepts" aria-label="Link to section">#</a>LangGraph 5 Concepts</h3>
+<ol>
+<li><strong>State</strong> — shared dict</li>
+<li><strong>Nodes</strong> — Python functions</li>
+<li><strong>Edges</strong> — transitions (normal, conditional)</li>
+<li><strong>Cycles</strong> — loops back</li>
+<li><strong>Checkpointer</strong> — persistence</li>
+</ol>
+<h3 id="12-prompt-techniques"><a class="anchor" href="#12-prompt-techniques" aria-label="Link to section">#</a>12 Prompt Techniques</h3>
+<p>Zero-shot, Few-shot, CoT, Zero-shot CoT, Self-Consistency, ToT, ReAct, Role, System Message, Structured Output, Negative Prompting, LCEL Chaining</p>
+<h3 id="10-cost-optimization-levers"><a class="anchor" href="#10-cost-optimization-levers" aria-label="Link to section">#</a>10 Cost Optimization Levers</h3>
+<ol>
+<li>Model cascading (50-70%)</li>
+<li>Semantic caching (30-60%)</li>
+<li>Prompt caching (50-90%)</li>
+<li>Token reduction (20-50%)</li>
+<li>Smaller embeddings (50%)</li>
+<li>Batch processing (30%)</li>
+<li>Fine-tune small model (70%+)</li>
+<li>Rate limiting (20%)</li>
+<li>Compression (10-20%)</li>
+<li>Reserved capacity (20-40%)</li>
+</ol>
+<hr>
+<h2 id="94-90-second-pitch-template"><a class="anchor" href="#94-90-second-pitch-template" aria-label="Link to section">#</a>9.4 90-Second Pitch Template</h2>
+<h3 id="the-career-craft-care-company-framework"><a class="anchor" href="#the-career-craft-care-company-framework" aria-label="Link to section">#</a>The Career → Craft → Care → Company Framework</h3>
+<blockquote>
+<p>&quot;I&#39;m a GenAI engineer with [X] years building production AI systems — primarily RAG pipelines, agentic workflows, and full-stack GenAI applications. My core strength is <strong>bridging research to production</strong> by obsessing over evaluation, observability, and cost.</p>
+<p>I work across the full stack — <strong>FastAPI backends, React frontends, and LangGraph orchestration</strong> with Azure OpenAI, Qdrant, and Postgres in between. I care about Responsible AI because I&#39;ve seen what happens when PII handling is an afterthought.</p>
+<p>I&#39;m excited about [Company] because you&#39;re applying GenAI to real problems, not hype. That&#39;s the meaningful, scaled AI work I want to do next.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="95-power-phrases-to-use-throughout-answers"><a class="anchor" href="#95-power-phrases-to-use-throughout-answers" aria-label="Link to section">#</a>9.5 Power Phrases to Use Throughout Answers</h2>
+<ul>
+<li>✅ &quot;Production-grade rigor&quot;</li>
+<li>✅ &quot;Observability and evaluation are non-negotiable&quot;</li>
+<li>✅ &quot;Cost-aware GenAI&quot;</li>
+<li>✅ &quot;Defense in depth with guardrails&quot;</li>
+<li>✅ &quot;Stateful orchestration with LangGraph&quot;</li>
+<li>✅ &quot;Hybrid search for precision + recall&quot;</li>
+<li>✅ &quot;Cite your sources&quot; (RAG with citations)</li>
+<li>✅ &quot;Fail fast, fail safe&quot;</li>
+<li>✅ &quot;Human-in-the-loop for sensitive actions&quot;</li>
+<li>✅ &quot;Responsible AI is not optional&quot;</li>
+<li>✅ &quot;Bridge research to production&quot;</li>
+<li>✅ &quot;Architectural decision record (ADR)&quot;</li>
+</ul>
+<hr>
+<h2 id="96-red-flags-to-avoid-never-say"><a class="anchor" href="#96-red-flags-to-avoid-never-say" aria-label="Link to section">#</a>9.6 Red Flags to Avoid (Never Say)</h2>
+<ul>
+<li>❌ &quot;I just call llm.invoke()&quot; (no orchestration thinking)</li>
+<li>❌ &quot;Embeddings are magic&quot; (no fundamentals)</li>
+<li>❌ &quot;RAG is enough&quot; (not aware of limits)</li>
+<li>❌ &quot;I&#39;ll use the biggest model&quot; (no cost awareness)</li>
+<li>❌ &quot;We don&#39;t need eval&quot; (production amateur)</li>
+<li>❌ &quot;We hardcoded the prompt&quot; (no version control)</li>
+<li>❌ &quot;PII handling? We&#39;ll add later&quot; (compliance risk)</li>
+<li>❌ &quot;Agents will solve everything&quot; (over-engineering)</li>
+<li>❌ &quot;I don&#39;t know how vector DBs work internally&quot; (weak fundamentals)</li>
+<li>❌ &quot;ChatGPT can do that&quot; (dismissive)</li>
+</ul>
+<hr>
+<h2 id="97-questions-to-ask-the-interviewer"><a class="anchor" href="#97-questions-to-ask-the-interviewer" aria-label="Link to section">#</a>9.7 Questions to Ask the Interviewer</h2>
+<p>At the end, always ask thoughtful questions:</p>
+<ol>
+<li>&quot;What&#39;s the first GenAI project you&#39;d want me to ship in the first 90 days?&quot;</li>
+<li>&quot;How does the team currently handle GenAI observability and evaluation?&quot;</li>
+<li>&quot;What&#39;s the biggest production challenge with your current GenAI apps?&quot;</li>
+<li>&quot;How does the team collaborate across geographies?&quot;</li>
+<li>&quot;What&#39;s your posture on Responsible AI — any formal policies?&quot;</li>
+<li>&quot;What&#39;s the team&#39;s experience level — mostly senior, or am I building from scratch?&quot;</li>
+<li>&quot;What does success look like for this role in 6 months?&quot;</li>
+</ol>
+<hr>
+<h2 id="98-minute-by-minute-study-plan"><a class="anchor" href="#98-minute-by-minute-study-plan" aria-label="Link to section">#</a>9.8 Minute-by-Minute Study Plan</h2>
+<h3 id="if-you-have-2-hours-recommended"><a class="anchor" href="#if-you-have-2-hours-recommended" aria-label="Link to section">#</a>If You Have 2 Hours (Recommended)</h3>
+<ul>
+<li>30 min: Big picture + 6 RAG strategies</li>
+<li>30 min: LangGraph deep dive</li>
+<li>20 min: Vector DBs</li>
+<li>20 min: Cloud AI</li>
+<li>20 min: Production GenAI</li>
+</ul>
+<h3 id="if-you-have-1-hour"><a class="anchor" href="#if-you-have-1-hour" aria-label="Link to section">#</a>If You Have 1 Hour</h3>
+<ul>
+<li>Read the 5 Architecture Patterns</li>
+<li>Read the 5 Trade-offs</li>
+<li>Read the 5 Production Concerns</li>
+<li>Memorize the Cost Cheatsheet</li>
+<li>Practice your 90-second pitch 3x</li>
+</ul>
+<h3 id="if-you-have-30-minutes"><a class="anchor" href="#if-you-have-30-minutes" aria-label="Link to section">#</a>If You Have 30 Minutes</h3>
+<ul>
+<li>Read the Cheat Sheet</li>
+<li>Practice your pitch</li>
+<li>Skim the Power Phrases</li>
+<li>Skim the Red Flags</li>
+</ul>
+<h3 id="if-you-have-10-minutes-right-before-interview"><a class="anchor" href="#if-you-have-10-minutes-right-before-interview" aria-label="Link to section">#</a>If You Have 10 Minutes (Right Before Interview)</h3>
+<ul>
+<li>Read the Cheat Sheet one more time</li>
+<li>Take 3 deep breaths</li>
+<li>Smile, you&#39;re prepared</li>
+</ul>
+<hr>

@@ -1,0 +1,338 @@
+<h1>Part 2: Transformers, LLMs, Embeddings</h1>
+<h2 id="21-transformer-architecture"><a class="anchor" href="#21-transformer-architecture" aria-label="Link to section">#</a>2.1 Transformer Architecture</h2>
+<h3 id="why-transformers-won"><a class="anchor" href="#why-transformers-won" aria-label="Link to section">#</a>Why Transformers Won</h3>
+<p>Before transformers (pre-2017): RNNs and LSTMs processed text sequentially — slow, hard to parallelize, struggled with long-range dependencies.</p>
+<p>The 2017 paper &quot;Attention Is All You Need&quot; introduced the transformer, which processes all tokens in parallel using <strong>self-attention</strong>. This made training on massive datasets feasible.</p>
+<h3 id="self-attention-the-core-idea"><a class="anchor" href="#self-attention-the-core-idea" aria-label="Link to section">#</a>Self-Attention: The Core Idea</h3>
+<p>For each token, compute how much to &quot;pay attention&quot; to every other token in the sequence.</p>
+<pre><code>Input: &quot;The cat sat on the mat&quot;
+Q = &quot;cat&quot; query: which words matter for understanding &quot;cat&quot;?
+K = [&quot;the&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;the&quot;, &quot;mat&quot;] keys: each word&#39;s identity
+
+Attention scores for &quot;cat&quot;:
+  the_1: 0.1
+  cat:    0.5  ← high, refers to itself
+  sat:    0.3  ← subject-verb relationship
+  on:     0.05
+  the_2:  0.02
+  mat:    0.03
+
+Output: weighted sum of value vectors based on attention scores
+</code></pre>
+<h3 id="the-formula"><a class="anchor" href="#the-formula" aria-label="Link to section">#</a>The Formula</h3>
+<pre><code>Attention(Q, K, V) = softmax(QK^T / √d_k) V
+</code></pre>
+<p>Where:</p>
+<ul>
+<li>Q (Query): what am I looking for?</li>
+<li>K (Key): what do I contain?</li>
+<li>V (Value): what do I actually contribute?</li>
+<li>d_k: dimension of keys (scaling factor to prevent softmax saturation)</li>
+</ul>
+<h3 id="multi-head-attention"><a class="anchor" href="#multi-head-attention" aria-label="Link to section">#</a>Multi-Head Attention</h3>
+<p>Instead of one attention computation, do 8-16 in parallel. Each &quot;head&quot; learns to focus on different patterns:</p>
+<ul>
+<li>Head 1: syntactic relationships (subject-verb)</li>
+<li>Head 2: semantic relationships (synonyms)</li>
+<li>Head 3: positional (nearby words)</li>
+<li>...</li>
+</ul>
+<h3 id="the-diagram"><a class="anchor" href="#the-diagram" aria-label="Link to section">#</a>The Diagram</h3>
+<pre><code>┌────────────────────────────────────────────────────────┐
+│                  TRANSFORMER BLOCK                     │
+│                                                        │
+│  Input Embeddings + Positional Encoding               │
+│            │                                           │
+│            ▼                                           │
+│  ┌─────────────────────┐                               │
+│  │ Multi-Head          │                               │
+│  │ Self-Attention      │──► Add &amp; Norm ──┐             │
+│  └─────────────────────┘                 │             │
+│            │                             │             │
+│            ▼                             │             │
+│  ┌─────────────────────┐                 │             │
+│  │ Feed-Forward        │                 │             │
+│  │ Network (MLP)       │──► Add &amp; Norm ──┤             │
+│  └─────────────────────┘                 │             │
+│                                          │             │
+│         (Repeat N times) ◄───────────────┘             │
+│                                                        │
+│                  Output                                │
+└────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="encoder-vs-decoder"><a class="anchor" href="#encoder-vs-decoder" aria-label="Link to section">#</a>Encoder vs Decoder</h3>
+<p><strong>Encoder-only</strong> (BERT, RoBERTa):</p>
+<ul>
+<li>Bidirectional attention — sees full context both ways</li>
+<li>Best for: classification, embeddings, NER</li>
+<li>Cannot generate text</li>
+</ul>
+<p><strong>Decoder-only</strong> (GPT, Claude, Llama):</p>
+<ul>
+<li>Causal/masked attention — only sees past tokens</li>
+<li>Best for: text generation, chat</li>
+<li>This is what 95% of modern LLMs are</li>
+</ul>
+<p><strong>Encoder-Decoder</strong> (T5, original Transformer):</p>
+<ul>
+<li>Encoder processes input, decoder generates output</li>
+<li>Best for: translation, summarization</li>
+<li>Less common now; decoder-only dominates</li>
+</ul>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;The transformer is built on self-attention — for each token, it computes how much to attend to every other token. This lets it capture long-range dependencies and parallelizes across GPUs. There are three variants: encoder-only (BERT, good for embeddings/classification), decoder-only (GPT, Claude, Llama, good for generation), and encoder-decoder (T5, good for translation). Modern LLMs are decoder-only because generation is the dominant use case. The multi-head attention runs 8-16 attention computations in parallel, each learning a different pattern. Positional encoding adds order information since attention is permutation-invariant.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="22-llm-anatomy-how-gpt-4-claude-works"><a class="anchor" href="#22-llm-anatomy-how-gpt-4-claude-works" aria-label="Link to section">#</a>2.2 LLM Anatomy (How GPT-4 / Claude Works)</h2>
+<h3 id="training-phases"><a class="anchor" href="#training-phases" aria-label="Link to section">#</a>Training Phases</h3>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│ Phase 1: Pre-training (months, $100M+)                  │
+│   - Trillions of tokens from web, books, code            │
+│   - Self-supervised: predict next token                  │
+│   - Learns: grammar, facts, reasoning, code patterns    │
+│   - Output: base model (not yet useful as a chatbot)     │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│ Phase 2: Instruction Tuning (days, $1M+)                │
+│   - 10k-100k high-quality (instruction, response) pairs  │
+│   - Fine-tunes base model to follow instructions         │
+│   - Learns: format, helpfulness, refusal                 │
+│   - Output: instruct model (now useful as assistant)     │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│ Phase 3: RLHF / RLAIF / DPO (weeks, $1M+)               │
+│   - Human/AI ranks multiple model outputs                │
+│   - Reward model trained on rankings                     │
+│   - PPO or DPO optimizes policy toward reward            │
+│   - Learns: alignment, safety, nuance, style            │
+│   - Output: final production model                       │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="key-concepts"><a class="anchor" href="#key-concepts" aria-label="Link to section">#</a>Key Concepts</h3>
+<p><strong>Context Window</strong>: How many tokens the model can &quot;see&quot; at once</p>
+<ul>
+<li>GPT-4o: 128k tokens</li>
+<li>Claude 3.5 Sonnet: 200k tokens</li>
+<li>Gemini 1.5 Pro: 1M-2M tokens</li>
+</ul>
+<p><strong>Temperature</strong>: Randomness in output</p>
+<ul>
+<li>0: deterministic (best for code, facts, RAG)</li>
+<li>0.7: balanced (general chat)</li>
+<li>1.0+: creative (brainstorming, fiction)</li>
+</ul>
+<p><strong>Top-p (nucleus sampling)</strong>: Sample from smallest set of tokens whose cumulative probability ≥ p</p>
+<ul>
+<li>0.1: focused, deterministic-ish</li>
+<li>0.9: diverse</li>
+<li>1.0: full distribution</li>
+</ul>
+<p><strong>Max tokens</strong>: Hard cap on output length</p>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;Modern LLMs like GPT-4o go through three training phases: pre-training on trillions of tokens to learn language and world knowledge, instruction tuning to follow directions, and RLHF/DPO for alignment and safety. When I call an LLM in production, I care about: context window (how much I can fit), temperature (0 for deterministic RAG, 0.7 for creative chat), max tokens (cost control), and stop sequences (to prevent runaway generation). For RAG systems I always set temperature=0 to get reproducible retrieval-grounded answers.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="23-embeddings-deep-dive"><a class="anchor" href="#23-embeddings-deep-dive" aria-label="Link to section">#</a>2.3 Embeddings Deep Dive</h2>
+<h3 id="what-are-embeddings"><a class="anchor" href="#what-are-embeddings" aria-label="Link to section">#</a>What Are Embeddings?</h3>
+<p>A vector representation of text (or images, audio) where semantically similar items are close in vector space.</p>
+<pre><code>&quot;king&quot;   → [0.2, 0.8, 0.1, ...]   (768-dim)
+&quot;queen&quot;  → [0.21, 0.79, 0.12, ...] ← close to &quot;king&quot;
+&quot;pizza&quot;  → [0.7, 0.1, 0.6, ...]   ← far from &quot;king&quot;
+</code></pre>
+<h3 id="famous-property-king-man-woman-queen"><a class="anchor" href="#famous-property-king-man-woman-queen" aria-label="Link to section">#</a>Famous Property: king - man + woman ≈ queen</h3>
+<pre><code class="language-python">import numpy as np
+king = np.array([0.2, 0.8, 0.1])
+man = np.array([0.3, 0.1, 0.4])
+woman = np.array([0.25, 0.15, 0.38])
+
+result = king - man + woman  # ≈ queen
+</code></pre>
+<h3 id="text-embedding-models-production-choices"><a class="anchor" href="#text-embedding-models-production-choices" aria-label="Link to section">#</a>Text Embedding Models (Production Choices)</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Dimensions</th>
+<th>Cost</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>text-embedding-3-small</strong></td>
+<td>1536 (Matryoshka: 512)</td>
+<td>$0.02/1M</td>
+<td>Default, 80% of cases</td>
+</tr>
+<tr>
+<td><strong>text-embedding-3-large</strong></td>
+<td>3072</td>
+<td>$0.13/1M</td>
+<td>High accuracy needed</td>
+</tr>
+<tr>
+<td><strong>Cohere embed-v3</strong></td>
+<td>1024</td>
+<td>$0.10/1M</td>
+<td>Multilingual</td>
+</tr>
+<tr>
+<td><strong>BGE-large-en-v1.5</strong></td>
+<td>1024</td>
+<td>Free (self-host)</td>
+<td>OSS, high quality</td>
+</tr>
+<tr>
+<td><strong>Voyage-3</strong></td>
+<td>1024</td>
+<td>$0.06/1M</td>
+<td>Long context (32k)</td>
+</tr>
+</tbody></table>
+<h3 id="can-you-embed-images-yes"><a class="anchor" href="#can-you-embed-images-yes" aria-label="Link to section">#</a>Can You Embed Images? (Yes!)</h3>
+<ul>
+<li><strong>CLIP</strong> (OpenAI): text and image in same vector space — you can search images with text queries</li>
+<li><strong>GPT-4V / Claude 3.5 Sonnet</strong>: caption images, then embed the caption</li>
+<li>Store in same Qdrant collection with <code>modality: &quot;image&quot;</code> payload</li>
+</ul>
+<h3 id="matryoshka-embeddings-dimension-flexibility"><a class="anchor" href="#matryoshka-embeddings-dimension-flexibility" aria-label="Link to section">#</a>Matryoshka Embeddings (Dimension Flexibility)</h3>
+<p>OpenAI&#39;s text-embedding-3 models are trained so that the first 512 dimensions are nearly as good as the full 1536. This lets you:</p>
+<ul>
+<li>Embed at 1536 dims, store at 512 (3x storage savings)</li>
+<li>3x faster similarity search</li>
+<li>~0.1% quality loss</li>
+</ul>
+<h3 id="cosine-similarity-vs-dot-product"><a class="anchor" href="#cosine-similarity-vs-dot-product" aria-label="Link to section">#</a>Cosine Similarity vs Dot Product</h3>
+<pre><code class="language-python">import numpy as np
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+def dot_product(a, b):
+    return np.dot(a, b)
+
+# Cosine: measures angle only (ignores magnitude)
+# Dot product: measures both angle and magnitude
+# Use cosine for normalized text embeddings (default)
+# Use dot product when magnitudes matter (recommendation scores)
+</code></pre>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;Embeddings are dense vector representations of text where semantic similarity maps to geometric proximity. For text I default to OpenAI&#39;s text-embedding-3-small (1536 dims, $0.02 per million tokens) and use Matryoshka representation to store at 512 dims — saves 3x storage with negligible quality loss. Similarity is computed with cosine (angle-based) for text. Yes, you can embed images — CLIP puts text and images in the same vector space, and we can store both in the same Qdrant collection with a <code>modality</code> payload field for filtering.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="24-chunking-strategies"><a class="anchor" href="#24-chunking-strategies" aria-label="Link to section">#</a>2.4 Chunking Strategies</h2>
+<h3 id="the-7-chunking-strategies"><a class="anchor" href="#the-7-chunking-strategies" aria-label="Link to section">#</a>The 7 Chunking Strategies</h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Size</th>
+<th>When to Use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Fixed-size</strong></td>
+<td>500 chars, 50 overlap</td>
+<td>General text, baseline</td>
+</tr>
+<tr>
+<td><strong>Sentence-based</strong></td>
+<td>One sentence</td>
+<td>Q&amp;A, conversational</td>
+</tr>
+<tr>
+<td><strong>Recursive character</strong></td>
+<td>500 tokens, recursive split</td>
+<td>Default — general docs</td>
+</tr>
+<tr>
+<td><strong>Token-based</strong></td>
+<td>512 tokens</td>
+<td>LLM-context-limited</td>
+</tr>
+<tr>
+<td><strong>Semantic chunking</strong></td>
+<td>Variable by topic shift</td>
+<td>Technical docs, books</td>
+</tr>
+<tr>
+<td><strong>Document-specific</strong></td>
+<td>Markdown headers, code functions</td>
+<td>Structured docs</td>
+</tr>
+<tr>
+<td><strong>Parent document</strong></td>
+<td>Small for search, large for context</td>
+<td>Q&amp;A over long docs</td>
+</tr>
+</tbody></table>
+<h3 id="the-code-all-strategies"><a class="anchor" href="#the-code-all-strategies" aria-label="Link to section">#</a>The Code (All Strategies)</h3>
+<pre><code class="language-python">from langchain.text_splitter import (
+    CharacterTextSplitter,
+    RecursiveCharacterTextSplitter,
+    TokenTextSplitter,
+    MarkdownTextSplitter,
+    PythonCodeTextSplitter
+)
+
+# 1. Fixed-size
+splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+
+# 2. Recursive character (DEFAULT — recommended)
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=50,
+    separators=[&quot;\n\n&quot;, &quot;\n&quot;, &quot;. &quot;, &quot; &quot;, &quot;&quot;]  # try each in order
+)
+
+# 3. Token-based
+splitter = TokenTextSplitter(chunk_size=512, chunk_overlap=50)
+
+# 4. Markdown-aware
+splitter = MarkdownTextSplitter(chunk_size=1000)
+
+# 5. Code-aware
+splitter = PythonCodeTextSplitter(chunk_size=500)
+
+# 6. Semantic chunking (uses embeddings to detect topic shifts)
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_openai import OpenAIEmbeddings
+splitter = SemanticChunker(OpenAIEmbeddings(), breakpoint_threshold_type=&quot;percentile&quot;)
+
+# 7. Parent document retriever (the killer pattern)
+from langchain.retrievers import ParentDocumentRetriever
+from langchain.storage import InMemoryStore
+
+parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000)
+child_splitter = RecursiveCharacterTextSplitter(chunk_size=400)
+store = InMemoryStore()
+
+retriever = ParentDocumentRetriever(
+    vectorstore=vector_db,
+    docstore=store,
+    child_splitter=child_splitter,
+    parent_splitter=parent_splitter
+)
+
+# Index: splits into 400-token chunks for embedding (precise search)
+# Retrieve: returns parent 2000-token chunks (rich context)
+</code></pre>
+<h3 id="chunking-decision-tree"><a class="anchor" href="#chunking-decision-tree" aria-label="Link to section">#</a>Chunking Decision Tree</h3>
+<pre><code>What kind of document?
+├── Markdown / HTML → Use MarkdownTextSplitter (split on headers)
+├── Code → Use language-specific splitter (PythonCodeTextSplitter)
+├── PDF / book → Recursive character + semantic chunking
+├── Conversational / Q&amp;A → Sentence-based
+└── Mixed → Recursive character (default 500/50)
+</code></pre>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;I default to <strong>recursive character splitting with 500 tokens and 50 overlap</strong> because it respects natural document boundaries (paragraphs, sentences). For structured docs (markdown, code) I use the format-aware splitter. For long-form documents where I need precise retrieval but rich context, I use the <strong>parent document retriever</strong> — index small chunks for search, return large parent chunks. Chunk size is a hyperparameter I tune per use case: smaller = more precise retrieval, larger = more context per chunk.&quot;</p>
+</blockquote>
+<hr>

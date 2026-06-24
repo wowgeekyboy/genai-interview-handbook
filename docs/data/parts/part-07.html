@@ -1,0 +1,387 @@
+<h1>Part 7: Advanced Topics</h1>
+<h2 id="71-prompting-techniques-the-full-spectrum"><a class="anchor" href="#71-prompting-techniques-the-full-spectrum" aria-label="Link to section">#</a>7.1 Prompting Techniques — The Full Spectrum</h2>
+<h3 id="the-12-techniques"><a class="anchor" href="#the-12-techniques" aria-label="Link to section">#</a>The 12 Techniques</h3>
+<p><strong>1. Zero-Shot</strong> — Just ask</p>
+<pre><code class="language-python">response = llm.invoke(&quot;Translate to French: &#39;Hello&#39;&quot;)
+</code></pre>
+<p><strong>2. Few-Shot</strong> — 3-5 examples before asking</p>
+<pre><code class="language-python">prompt = &quot;&quot;&quot;Translate English to French:
+&quot;Hello&quot; → &quot;Bonjour&quot;
+&quot;Goodbye&quot; → &quot;Au revoir&quot;
+&quot;Thank you&quot; → &quot;Merci&quot;
+&quot;Good morning&quot; →&quot;&quot;&quot;
+response = llm.invoke(prompt)
+</code></pre>
+<p><strong>3. Chain-of-Thought (CoT)</strong> — Force step-by-step</p>
+<pre><code class="language-python">prompt = &quot;Q: A store has 15 apples, sells 7, receives 20 more. How many?\nA: Let&#39;s think step by step.&quot;
+</code></pre>
+<p><strong>4. Zero-Shot CoT</strong> — Magic phrase: &quot;Let&#39;s think step by step&quot;
+<strong>5. Self-Consistency</strong> — Multiple CoTs + majority vote</p>
+<pre><code class="language-python">answers = [llm.invoke(prompt) for _ in range(5)]
+final = most_common(answers)
+</code></pre>
+<p><strong>6. Tree of Thoughts</strong> — Explore paths, evaluate, pick best
+<strong>7. ReAct</strong> — Reason + Act (interleave thinking with tool use)
+<strong>8. Role Prompting</strong> — &quot;You are an expert...&quot;
+<strong>9. System Message</strong> — Persistent instruction set</p>
+<pre><code class="language-python">messages = [
+    {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;You are a customer support agent. Always cite sources.&quot;},
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;What&#39;s the warranty?&quot;}
+]
+</code></pre>
+<p><strong>10. Structured Output (JSON Mode)</strong> — Pydantic models</p>
+<pre><code class="language-python">from pydantic import BaseModel
+class Answer(BaseModel):
+    text: str
+    confidence: float
+    sources: list[str]
+
+llm_structured = llm.with_structured_output(Answer)
+result = llm_structured.invoke(messages)
+</code></pre>
+<p><strong>11. Negative Prompting</strong> — Tell what NOT to do
+<strong>12. Prompt Chaining (LCEL)</strong> — Sequence multiple prompts</p>
+<h3 id="hard-prompts-vs-soft-prompts"><a class="anchor" href="#hard-prompts-vs-soft-prompts" aria-label="Link to section">#</a>Hard Prompts vs Soft Prompts</h3>
+<p><strong>Hard Prompts</strong>: Manually crafted text. What 95% of production GenAI uses.</p>
+<ul>
+<li>Full control over wording</li>
+<li>Iteratively tested and refined</li>
+<li>Examples: System messages, few-shot prompts</li>
+</ul>
+<p><strong>Soft Prompts</strong>: Learned continuous embeddings that act as &quot;prompts&quot; (used in PEFT).</p>
+<ul>
+<li>Trainable parameters (virtual tokens) prepended to input</li>
+<li>Not visible to humans — vectors in embedding space</li>
+<li>Used in Prompt Tuning and Prefix Tuning</li>
+<li>Saves compute vs full fine-tuning</li>
+</ul>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;I use hard prompts — manually crafted text — for 95% of production. The techniques I lean on: zero-shot as default, few-shot for format consistency, chain-of-thought for reasoning, structured output for tool integration, and system messages for guardrails. I use prompt chaining with LCEL for multi-step pipelines. For research settings I&#39;ve read about soft prompts — learned continuous embeddings — but they&#39;re rarely worth the complexity in production where GPT-4o can be fine-tuned instead.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="72-fine-tuning-llms"><a class="anchor" href="#72-fine-tuning-llms" aria-label="Link to section">#</a>7.2 Fine-Tuning LLMs</h2>
+<h3 id="the-decision-framework"><a class="anchor" href="#the-decision-framework" aria-label="Link to section">#</a>The Decision Framework</h3>
+<pre><code>Need specific OUTPUT FORMAT/STYLE across many queries?
+├── YES → Fine-tune (or few-shot)
+└── NO → Need specific KNOWLEDGE that&#39;s not in base model?
+        ├── YES → RAG (always start here)
+        └── NO → Prompt engineering is enough
+</code></pre>
+<h3 id="when-to-fine-tune"><a class="anchor" href="#when-to-fine-tune" aria-label="Link to section">#</a>When to Fine-Tune</h3>
+<p>✅ Consistent style/tone (legal, medical voice)
+✅ Specific output format (always JSON schema)
+✅ Domain expertise baked in
+✅ Latency matters (smaller fine-tuned model)
+✅ Cost matters (7B model vs GPT-4o = 1/10 cost)</p>
+<p>❌ Just need recent data (use RAG)
+❌ &lt; 500 examples
+❌ Want model to &quot;know&quot; facts (use RAG)
+❌ Can solve with better prompting</p>
+<h3 id="the-3-types"><a class="anchor" href="#the-3-types" aria-label="Link to section">#</a>The 3 Types</h3>
+<p><strong>Full Fine-Tuning</strong>: Update ALL weights. $$$$, rarely in production.</p>
+<p><strong>LoRA (Low-Rank Adaptation)</strong>: ⭐ Most Popular</p>
+<pre><code class="language-python">from peft import LoraConfig, get_peft_model
+
+lora_config = LoraConfig(
+    task_type=TaskType.CAUSAL_LM,
+    r=8,
+    lora_alpha=32,
+    lora_dropout=0.1,
+    target_modules=[&quot;q_proj&quot;, &quot;v_proj&quot;]
+)
+model = get_peft_model(base_model, lora_config)
+# Trainable: 0.039% of params
+</code></pre>
+<p><strong>QLoRA</strong>: LoRA + 4-bit quantization. Can fine-tune 65B on single GPU.</p>
+<h3 id="openai-fine-tuning-easiest"><a class="anchor" href="#openai-fine-tuning-easiest" aria-label="Link to section">#</a>OpenAI Fine-Tuning (Easiest)</h3>
+<pre><code class="language-python">client.fine_tuning.jobs.create(
+    training_file=&quot;file-abc123&quot;,
+    model=&quot;gpt-4o-mini-2024-07-18&quot;,
+    hyperparameters={&quot;n_epochs&quot;: 3}
+)
+</code></pre>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;I&#39;ve fine-tuned models in two ways. First, LoRA on Llama-2-7B for a domain-specific chatbot — trained on 2000 customer support transcripts to learn company voice, reduced hallucinations by 30%. Second, OpenAI&#39;s fine-tuning API on GPT-4o-mini to enforce structured JSON output — saved parsing errors and reduced token usage by 20%. Decision framework: if I need specific knowledge, I use RAG; if I need specific style/format, I fine-tune. Often both. Fine-tuning needs at least 500 examples and a clear evaluation metric.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="73-claude-api-prompt-caching"><a class="anchor" href="#73-claude-api-prompt-caching" aria-label="Link to section">#</a>7.3 Claude API &amp; Prompt Caching</h2>
+<h3 id="4-ways-to-use-claude"><a class="anchor" href="#4-ways-to-use-claude" aria-label="Link to section">#</a>4 Ways to Use Claude</h3>
+<pre><code class="language-python">import anthropic
+client = anthropic.Anthropic(api_key=&quot;sk-ant-...&quot;)
+
+# 1. Basic call
+message = client.messages.create(
+    model=&quot;claude-3-5-sonnet-20241022&quot;,
+    max_tokens=1024,
+    system=&quot;You are a helpful assistant.&quot;,
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Hello!&quot;}]
+)
+
+# 2. Streaming
+with client.messages.stream(
+    model=&quot;claude-3-5-sonnet-20241022&quot;,
+    max_tokens=1024,
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Write a poem&quot;}]
+) as stream:
+    for text in stream.text_stream:
+        print(text, end=&quot;&quot;, flush=True)
+
+# 3. Tool Use (Function Calling)
+tools = [{
+    &quot;name&quot;: &quot;get_weather&quot;,
+    &quot;description&quot;: &quot;Get weather in a location&quot;,
+    &quot;input_schema&quot;: {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {&quot;location&quot;: {&quot;type&quot;: &quot;string&quot;}}}
+}]
+response = client.messages.create(model=&quot;claude-3-5-sonnet-20241022&quot;, tools=tools, messages=[...])
+
+# 4. Prompt Caching (90% off cached prefixes!)
+response = client.messages.create(
+    model=&quot;claude-3-5-sonnet-20241022&quot;,
+    system=[{
+        &quot;type&quot;: &quot;text&quot;,
+        &quot;text&quot;: &quot;[HUGE LONG POLICY DOCUMENT...]&quot;,
+        &quot;cache_control&quot;: {&quot;type&quot;: &quot;ephemeral&quot;}  # Cache this!
+    }],
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;What&#39;s the PTO policy?&quot;}]
+)
+</code></pre>
+<h3 id="claude-vs-gpt-4"><a class="anchor" href="#claude-vs-gpt-4" aria-label="Link to section">#</a>Claude vs GPT-4</h3>
+<table>
+<thead>
+<tr>
+<th>Use Case</th>
+<th>Best</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Coding tasks</td>
+<td>Claude 3.5 Sonnet</td>
+</tr>
+<tr>
+<td>Long documents (200k context)</td>
+<td>Claude 3.5 Sonnet</td>
+</tr>
+<tr>
+<td>Creative writing</td>
+<td>Claude</td>
+</tr>
+<tr>
+<td>Multimodal (image)</td>
+<td>GPT-4o</td>
+</tr>
+<tr>
+<td>Cheapest</td>
+<td>Gemini Flash, GPT-4o mini</td>
+</tr>
+<tr>
+<td>Bedrock integration</td>
+<td>Claude (Anthropic on AWS)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="74-mcp-model-context-protocol"><a class="anchor" href="#74-mcp-model-context-protocol" aria-label="Link to section">#</a>7.4 MCP (Model Context Protocol)</h2>
+<h3 id="what-is-mcp"><a class="anchor" href="#what-is-mcp" aria-label="Link to section">#</a>What Is MCP?</h3>
+<p>Open standard (Anthropic, late 2024) for connecting LLMs to tools and data. Like USB-C for AI.</p>
+<h3 id="three-primitives"><a class="anchor" href="#three-primitives" aria-label="Link to section">#</a>Three Primitives</h3>
+<ul>
+<li><strong>Tools</strong>: Functions the LLM can call</li>
+<li><strong>Resources</strong>: Data the LLM can read</li>
+<li><strong>Prompts</strong>: Pre-built prompt templates</li>
+</ul>
+<h3 id="mcp-server-architecture"><a class="anchor" href="#mcp-server-architecture" aria-label="Link to section">#</a>MCP Server Architecture</h3>
+<pre><code>┌──────────────────┐         ┌──────────────────┐
+│   MCP Host       │ ◄─MCP──►│   MCP Server     │
+│ (Claude Desktop, │         │ (your code)      │
+│  Cursor, IDEs,   │         │                  │
+│  LangChain)      │         └──────────────────┘
+└──────────────────┘
+       │
+       ├─────── Tool: search_docs ────►
+       ├─────── Resource: file://... ─►
+       └─────── Prompt: /summarize ───►
+</code></pre>
+<h3 id="build-an-mcp-server"><a class="anchor" href="#build-an-mcp-server" aria-label="Link to section">#</a>Build an MCP Server</h3>
+<pre><code class="language-python">from mcp.server.fastmcp import FastMCP
+import httpx
+
+mcp = FastMCP(&quot;policy-server&quot;)
+
+@mcp.tool()
+def search_policies(query: str, department: str = None) -&gt; str:
+    &quot;&quot;&quot;Search policy documents.&quot;&quot;&quot;
+    results = [{&quot;title&quot;: &quot;PTO Policy&quot;, &quot;content&quot;: &quot;15 days PTO...&quot;}]
+    return json.dumps(results)
+
+@mcp.resource(&quot;policies://pto&quot;)
+def pto_policy() -&gt; str:
+    &quot;&quot;&quot;Full text of the PTO policy.&quot;&quot;&quot;
+    with open(&quot;policies/pto.md&quot;) as f:
+        return f.read()
+
+@mcp.prompt()
+def summarize_policy(policy_name: str) -&gt; str:
+    &quot;&quot;&quot;Generate a prompt to summarize a policy.&quot;&quot;&quot;
+    return f&quot;Please read {{ uri: &#39;policies://{policy_name}&#39; }} and summarize.&quot;
+
+if __name__ == &quot;__main__&quot;:
+    mcp.run()  # stdio transport
+</code></pre>
+<h3 id="use-with-langchain"><a class="anchor" href="#use-with-langchain" aria-label="Link to section">#</a>Use with LangChain</h3>
+<pre><code class="language-python">from langchain_mcp import MCPToolkit
+from mcp import StdioServerParameters
+
+server_params = StdioServerParameters(command=&quot;python&quot;, args=[&quot;mcp_server.py&quot;])
+toolkit = MCPToolkit(server_params=server_params)
+tools = toolkit.get_tools()
+
+from langgraph.prebuilt import create_react_agent
+agent = create_react_agent(ChatOpenAI(model=&quot;gpt-4o&quot;), tools)
+</code></pre>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;I&#39;ve built MCP servers using the open protocol. A recent server exposed policy documents through three primitives: tools (search_policies), resources (policies://pto), and prompts (summarize_policy templates). The value of MCP over custom function calling is portability — write the server once and any MCP-compatible client (Claude Desktop, Cursor, LangChain agents) can use it.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="75-pii-masking-unmasking-5-layer-defense"><a class="anchor" href="#75-pii-masking-unmasking-5-layer-defense" aria-label="Link to section">#</a>7.5 PII Masking / Unmasking — 5-Layer Defense</h2>
+<h3 id="the-full-solution"><a class="anchor" href="#the-full-solution" aria-label="Link to section">#</a>The Full Solution</h3>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│ Layer 1: INPUT VALIDATION (block PII from entering LLM)          │
+│ Layer 2: PII REDACTION (replace with placeholders)               │
+│ Layer 3: SECURE STORAGE (encrypt original separately)           │
+│ Layer 4: OUTPUT MASKING (don&#39;t leak PII in responses)           │
+│ Layer 5: AUDIT LOGGING (track all PII access)                   │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="layer-1-2-detect-redact"><a class="anchor" href="#layer-1-2-detect-redact" aria-label="Link to section">#</a>Layer 1-2: Detect &amp; Redact</h3>
+<pre><code class="language-python">from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+analyzer = AnalyzerEngine()
+anonymizer = AnonymizerEngine()
+
+def detect_pii(text: str) -&gt; list:
+    results = analyzer.analyze(text=text, language=&#39;en&#39;)
+    return [{&quot;type&quot;: r.entity_type, &quot;text&quot;: text[r.start:r.end]} for r in results]
+
+def redact_pii(text: str) -&gt; str:
+    results = analyzer.analyze(text=text, language=&#39;en&#39;)
+    anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+    return anonymized.text
+# &quot;My SSN is 123-45-6789&quot; → &quot;My SSN is &lt;US_SSN&gt;&quot;
+</code></pre>
+<h3 id="layer-3-secure-storage-redis-fernet-encryption"><a class="anchor" href="#layer-3-secure-storage-redis-fernet-encryption" aria-label="Link to section">#</a>Layer 3: Secure Storage (Redis + Fernet encryption)</h3>
+<pre><code class="language-python">from cryptography.fernet import Fernet
+import redis
+import uuid
+
+key = Fernet.generate_key()  # Store in Key Vault in production
+cipher = Fernet(key)
+r = redis.Redis(host=&#39;localhost&#39;, port=6379)
+
+def create_secure_session(user_input: str, user_id: str):
+    pii_entities = detect_pii(user_input)
+    if not pii_entities:
+        return user_input, None
+
+    pii_map = {}
+    sanitized = user_input
+    for entity in pii_entities:
+        placeholder = f&quot;&lt;{entity[&#39;type&#39;]}_{entity[&#39;start&#39;]}&gt;&quot;
+        encrypted_value = cipher.encrypt(entity[&#39;text&#39;].encode()).decode()
+        pii_map[placeholder] = encrypted_value
+        sanitized = sanitized.replace(entity[&#39;text&#39;], placeholder)
+
+    session_id = str(uuid.uuid4())
+    r.hset(f&quot;pii_map:{session_id}&quot;, mapping=pii_map)
+    r.expire(f&quot;pii_map:{session_id}&quot;, 3600)  # 1 hour TTL
+    return sanitized, session_id
+</code></pre>
+<h3 id="layer-4-unmask"><a class="anchor" href="#layer-4-unmask" aria-label="Link to section">#</a>Layer 4: Unmask</h3>
+<pre><code class="language-python">def unmask_response(llm_response: str, session_id: str) -&gt; str:
+    if not session_id:
+        return llm_response
+    pii_map = r.hgetall(f&quot;pii_map:{session_id}&quot;)
+    unmasked = llm_response
+    for placeholder, encrypted_value in pii_map.items():
+        decrypted = cipher.decrypt(encrypted_value).decode()
+        unmasked = unmasked.replace(placeholder.decode(), decrypted)
+    r.delete(f&quot;pii_map:{session_id}&quot;)
+    return unmasked
+</code></pre>
+<h3 id="layer-5-audit-logging"><a class="anchor" href="#layer-5-audit-logging" aria-label="Link to section">#</a>Layer 5: Audit Logging</h3>
+<pre><code class="language-python">def log_pii_access(user_id: str, pii_types: list, action: str):
+    audit_logger.info(json.dumps({
+        &quot;timestamp&quot;: datetime.utcnow().isoformat(),
+        &quot;user_id&quot;: user_id,
+        &quot;pii_types&quot;: pii_types,
+        &quot;action&quot;: action,
+        &quot;compliance_flags&quot;: [&quot;GDPR&quot;, &quot;HIPAA&quot;, &quot;PCI-DSS&quot;]
+    }))
+</code></pre>
+<h3 id="custom-regex-detection"><a class="anchor" href="#custom-regex-detection" aria-label="Link to section">#</a>Custom Regex Detection</h3>
+<pre><code class="language-python">import re
+
+PII_PATTERNS = {
+    &quot;SSN&quot;: r&quot;\b\d{3}-\d{2}-\d{4}\b&quot;,
+    &quot;CREDIT_CARD&quot;: r&quot;\b(?:\d{4}[-\s]?){3}\d{4}\b&quot;,
+    &quot;EMAIL&quot;: r&quot;\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b&quot;,
+    &quot;PHONE&quot;: r&quot;\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b&quot;,
+    &quot;IP_ADDRESS&quot;: r&quot;\b(?:\d{1,3}\.){3}\d{1,3}\b&quot;,
+    &quot;API_KEY&quot;: r&quot;(?i)(?:api[_-]?key|token)[\&quot;&#39;:=\s]+([a-zA-Z0-9_\-]{20,})&quot;,
+}
+</code></pre>
+<h3 id="luhn-algorithm-for-credit-card-validation"><a class="anchor" href="#luhn-algorithm-for-credit-card-validation" aria-label="Link to section">#</a>Luhn Algorithm for Credit Card Validation</h3>
+<pre><code class="language-python">def is_valid_credit_card(number: str) -&gt; bool:
+    &quot;&quot;&quot;Validate credit card using Luhn algorithm.&quot;&quot;&quot;
+    digits = [int(d) for d in number if d.isdigit()]
+    if len(digits) &lt; 13 or len(digits) &gt; 19:
+        return False
+    total = 0
+    for i, d in enumerate(digits[::-1]):
+        if i % 2 == 1:
+            d *= 2
+            if d &gt; 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+</code></pre>
+<h3 id="interview-answer-template"><a class="anchor" href="#interview-answer-template" aria-label="Link to section">#</a>Interview Answer Template</h3>
+<blockquote>
+<p>&quot;I implement PII protection in 5 layers. First, input validation using Presidio plus regex for custom patterns. For high-sensitivity items like SSN and credit cards, I use the Luhn algorithm and block the query entirely. For lower-sensitivity PII like email and phone, I redact to placeholders. Second, secure session storage (Redis + Fernet encryption) maps placeholders to real values with 1-hour TTL. After the LLM responds, I unmask for the user. Third, audit log every PII access for GDPR, HIPAA, PCI-DSS compliance. The principle is LLMs never see raw PII — they only see sanitized versions.&quot;</p>
+</blockquote>
+<hr>
+<h2 id="76-conversational-ai-patterns"><a class="anchor" href="#76-conversational-ai-patterns" aria-label="Link to section">#</a>7.6 Conversational AI Patterns</h2>
+<h3 id="multi-turn-memory"><a class="anchor" href="#multi-turn-memory" aria-label="Link to section">#</a>Multi-Turn Memory</h3>
+<pre><code class="language-python"># Option 1: Sliding window (last N turns)
+messages = messages[-10:]
+
+# Option 2: Summary (compress old turns)
+if len(messages) &gt; 20:
+    summary = llm.invoke(f&quot;Summarize: {messages[:10]}&quot;)
+    messages = [summary] + messages[10:]
+
+# Option 3: LangGraph checkpointer (best for production)
+config = {&quot;configurable&quot;: {&quot;thread_id&quot;: &quot;user_123&quot;}}
+result = app.invoke(input, config)  # remembers previous state
+</code></pre>
+<h3 id="twilio-sms-pattern"><a class="anchor" href="#twilio-sms-pattern" aria-label="Link to section">#</a>Twilio SMS Pattern</h3>
+<pre><code class="language-python">@app.post(&quot;/sms&quot;)
+async def sms(Body: str = Form(...), From: str = Form(...)):
+    config = {&quot;configurable&quot;: {&quot;thread_id&quot;: From}}  # Use phone as thread_id
+    result = rag_app.invoke({&quot;user_query&quot;: Body}, config)
+    return twiml_response(result[&quot;answer&quot;])
+</code></pre>
+<h3 id="mqtt-for-iot"><a class="anchor" href="#mqtt-for-iot" aria-label="Link to section">#</a>MQTT for IOT</h3>
+<ul>
+<li>Lightweight pub/sub protocol</li>
+<li>Topic-based: <code>factory/{id}/sensor/{type}</code></li>
+<li>Use case: sensor anomaly → LLM explanation → SMS alert</li>
+</ul>
+<h3 id="streaming-sse-vs-websocket"><a class="anchor" href="#streaming-sse-vs-websocket" aria-label="Link to section">#</a>Streaming: SSE vs WebSocket</h3>
+<ul>
+<li><strong>SSE</strong> (Server-Sent Events): One-way, server → client. Use for LLM tokens.</li>
+<li><strong>WebSocket</strong>: Two-way. Use for interactive chat with interrupts.</li>
+</ul>
+<hr>

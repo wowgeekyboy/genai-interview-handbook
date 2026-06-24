@@ -1,0 +1,448 @@
+{
+  "title": "The Complete GenAI & AI Engineering Handbook",
+  "tagline": "From fundamentals to production — crack any AI/GenAI engineering interview.",
+  "repo": "https://github.com/wowgeekyboy/genai-interview-handbook",
+  "generatedAt": "2026-06-24",
+  "stats": {
+    "lines": 7685,
+    "words": 35268,
+    "parts": 11,
+    "questions": 350,
+    "codeBlocks": 200,
+    "diagrams": 311
+  },
+  "sections": [
+    {
+      "id": "intro",
+      "num": "",
+      "title": "Start Here",
+      "file": "part-00.html",
+      "subs": [
+        {
+          "title": "How to Use This Handbook",
+          "slug": "how-to-use-this-handbook"
+        }
+      ]
+    },
+    {
+      "id": "part-1",
+      "num": "1",
+      "title": "Python & ML Fundamentals",
+      "file": "part-01.html",
+      "subs": [
+        {
+          "title": "1.1 Python Decorators (Asked in 80% of Interviews)",
+          "slug": "11-python-decorators-asked-in-80-of-interviews"
+        },
+        {
+          "title": "1.2 Lists vs Tuples (Asked Constantly)",
+          "slug": "12-lists-vs-tuples-asked-constantly"
+        },
+        {
+          "title": "1.3 How ML Models Are Generated (The Full Pipeline)",
+          "slug": "13-how-ml-models-are-generated-the-full-pipeline"
+        },
+        {
+          "title": "1.4 ML vs LLM — The Critical Distinction",
+          "slug": "14-ml-vs-llm-the-critical-distinction"
+        }
+      ]
+    },
+    {
+      "id": "part-2",
+      "num": "2",
+      "title": "Transformers, LLMs, Embeddings",
+      "file": "part-02.html",
+      "subs": [
+        {
+          "title": "2.1 Transformer Architecture",
+          "slug": "21-transformer-architecture"
+        },
+        {
+          "title": "2.2 LLM Anatomy (How GPT-4 / Claude Works)",
+          "slug": "22-llm-anatomy-how-gpt-4-claude-works"
+        },
+        {
+          "title": "2.3 Embeddings Deep Dive",
+          "slug": "23-embeddings-deep-dive"
+        },
+        {
+          "title": "2.4 Chunking Strategies",
+          "slug": "24-chunking-strategies"
+        }
+      ]
+    },
+    {
+      "id": "part-3",
+      "num": "3",
+      "title": "RAG Architecture — Basic + 6 Advanced Variants",
+      "file": "part-03.html",
+      "subs": [
+        {
+          "title": "3.1 The Vanilla RAG Pattern",
+          "slug": "31-the-vanilla-rag-pattern"
+        },
+        {
+          "title": "3.2 The 6 Advanced RAG Variants (Master This Table)",
+          "slug": "32-the-6-advanced-rag-variants-master-this-table"
+        },
+        {
+          "title": "3.3 Self-RAG",
+          "slug": "33-self-rag"
+        },
+        {
+          "title": "3.4 Corrective RAG (CRAG)",
+          "slug": "34-corrective-rag-crag"
+        },
+        {
+          "title": "3.5 Adaptive RAG",
+          "slug": "35-adaptive-rag"
+        },
+        {
+          "title": "3.6 Agentic RAG",
+          "slug": "36-agentic-rag"
+        },
+        {
+          "title": "3.7 HippoRAG",
+          "slug": "37-hipporag"
+        },
+        {
+          "title": "3.8 GraphRAG (Microsoft)",
+          "slug": "38-graphrag-microsoft"
+        },
+        {
+          "title": "3.9 Hybrid Search (BM25 + Dense + RRF)",
+          "slug": "39-hybrid-search-bm25-dense-rrf"
+        },
+        {
+          "title": "3.10 Interview Framework for \"Which RAG Would You Use?\"",
+          "slug": "310-interview-framework-for-which-rag-would-you-use"
+        }
+      ]
+    },
+    {
+      "id": "part-4",
+      "num": "4",
+      "title": "Agents, LangGraph, Orchestration",
+      "file": "part-04.html",
+      "subs": [
+        {
+          "title": "4.1 Agents vs Chains vs Graphs",
+          "slug": "41-agents-vs-chains-vs-graphs"
+        },
+        {
+          "title": "4.2 LangGraph — The 5 Core Concepts",
+          "slug": "42-langgraph-the-5-core-concepts"
+        },
+        {
+          "title": "4.3 The 3 LangGraph Patterns",
+          "slug": "43-the-3-langgraph-patterns"
+        },
+        {
+          "title": "4.4 Interview Answer Template",
+          "slug": "44-interview-answer-template"
+        }
+      ]
+    },
+    {
+      "id": "part-5",
+      "num": "5",
+      "title": "Vector Databases, Cloud AI, Full-Stack",
+      "file": "part-05.html",
+      "subs": [
+        {
+          "title": "5.1 Vector Database Decision Tree",
+          "slug": "51-vector-database-decision-tree"
+        },
+        {
+          "title": "5.2 Qdrant Deep Dive (Production Favorite)",
+          "slug": "52-qdrant-deep-dive-production-favorite"
+        },
+        {
+          "title": "5.3 HNSW Algorithm (Hierarchical Navigable Small World)",
+          "slug": "53-hnsw-algorithm-hierarchical-navigable-small-world"
+        },
+        {
+          "title": "5.4 Cloud AI Services",
+          "slug": "54-cloud-ai-services"
+        },
+        {
+          "title": "5.5 Full-Stack Architecture",
+          "slug": "55-full-stack-architecture"
+        }
+      ]
+    },
+    {
+      "id": "part-6",
+      "num": "6",
+      "title": "Production GenAI",
+      "file": "part-06.html",
+      "subs": [
+        {
+          "title": "6.1 The 5 Production Pillars",
+          "slug": "61-the-5-production-pillars"
+        },
+        {
+          "title": "6.2 Cost Calculation Formula",
+          "slug": "62-cost-calculation-formula"
+        },
+        {
+          "title": "6.3 Latency Optimization",
+          "slug": "63-latency-optimization"
+        },
+        {
+          "title": "6.4 Security: OWASP LLM Top 10",
+          "slug": "64-security-owasp-llm-top-10"
+        }
+      ]
+    },
+    {
+      "id": "part-7",
+      "num": "7",
+      "title": "Advanced Topics",
+      "file": "part-07.html",
+      "subs": [
+        {
+          "title": "7.1 Prompting Techniques — The Full Spectrum",
+          "slug": "71-prompting-techniques-the-full-spectrum"
+        },
+        {
+          "title": "7.2 Fine-Tuning LLMs",
+          "slug": "72-fine-tuning-llms"
+        },
+        {
+          "title": "7.3 Claude API & Prompt Caching",
+          "slug": "73-claude-api-prompt-caching"
+        },
+        {
+          "title": "7.4 MCP (Model Context Protocol)",
+          "slug": "74-mcp-model-context-protocol"
+        },
+        {
+          "title": "7.5 PII Masking / Unmasking — 5-Layer Defense",
+          "slug": "75-pii-masking-unmasking-5-layer-defense"
+        },
+        {
+          "title": "7.6 Conversational AI Patterns",
+          "slug": "76-conversational-ai-patterns"
+        }
+      ]
+    },
+    {
+      "id": "part-8",
+      "num": "8",
+      "title": "Cutting-Edge 2025/2026 + Rapid-Fire Q&A",
+      "file": "part-08.html",
+      "subs": [
+        {
+          "title": "8.1 Reasoning Models (o1, o3)",
+          "slug": "81-reasoning-models-o1-o3"
+        },
+        {
+          "title": "8.2 Inference Optimization",
+          "slug": "82-inference-optimization"
+        },
+        {
+          "title": "8.3 Mixture of Experts (MOE)",
+          "slug": "83-mixture-of-experts-moe"
+        },
+        {
+          "title": "8.4 Quantization",
+          "slug": "84-quantization"
+        },
+        {
+          "title": "8.5 The 200+ Rapid-Fire Q&A",
+          "slug": "85-the-200-rapid-fire-qa"
+        },
+        {
+          "title": "8.6 Behavioral Questions (STAR Framework)",
+          "slug": "86-behavioral-questions-star-framework"
+        }
+      ]
+    },
+    {
+      "id": "part-9",
+      "num": "9",
+      "title": "System Design + Cheat Sheet",
+      "file": "part-09.html",
+      "subs": [
+        {
+          "title": "9.1 System Design Scenarios",
+          "slug": "91-system-design-scenarios"
+        },
+        {
+          "title": "9.2 System Design Framework (Use This Every Time)",
+          "slug": "92-system-design-framework-use-this-every-time"
+        },
+        {
+          "title": "9.3 The Ultimate Cheat Sheet (10-Minute Final Read)",
+          "slug": "93-the-ultimate-cheat-sheet-10-minute-final-read"
+        },
+        {
+          "title": "9.4 90-Second Pitch Template",
+          "slug": "94-90-second-pitch-template"
+        },
+        {
+          "title": "9.5 Power Phrases to Use Throughout Answers",
+          "slug": "95-power-phrases-to-use-throughout-answers"
+        },
+        {
+          "title": "9.6 Red Flags to Avoid (Never Say)",
+          "slug": "96-red-flags-to-avoid-never-say"
+        },
+        {
+          "title": "9.7 Questions to Ask the Interviewer",
+          "slug": "97-questions-to-ask-the-interviewer"
+        },
+        {
+          "title": "9.8 Minute-by-Minute Study Plan",
+          "slug": "98-minute-by-minute-study-plan"
+        }
+      ]
+    },
+    {
+      "id": "part-10",
+      "num": "10",
+      "title": "Specialized Topics from JDs (Agents, MCP, Memory, Evals, Distributed Training, Healthcare AI)",
+      "file": "part-10.html",
+      "subs": [
+        {
+          "title": "10.1 Agent Reliability & Production Operations",
+          "slug": "101-agent-reliability-production-operations"
+        },
+        {
+          "title": "10.2 MCP (Model Context Protocol) at Scale",
+          "slug": "102-mcp-model-context-protocol-at-scale"
+        },
+        {
+          "title": "10.3 Memory & Context Engineering",
+          "slug": "103-memory-context-engineering"
+        },
+        {
+          "title": "10.4 Evals Infrastructure (The Full Stack)",
+          "slug": "104-evals-infrastructure-the-full-stack"
+        },
+        {
+          "title": "10.5 Observability Stacks (Signoz, Datadog, Custom)",
+          "slug": "105-observability-stacks-signoz-datadog-custom"
+        },
+        {
+          "title": "10.6 Connector & Integration Framework (OAUTH, Third-Party SaaS)",
+          "slug": "106-connector-integration-framework-oauth-third-party-saas"
+        },
+        {
+          "title": "10.7 Multi-Tenancy for AI Agents",
+          "slug": "107-multi-tenancy-for-ai-agents"
+        },
+        {
+          "title": "10.8 Healthcare AI Specifics",
+          "slug": "108-healthcare-ai-specifics"
+        },
+        {
+          "title": "10.9 Data Strategy for Foundation Model Development",
+          "slug": "109-data-strategy-for-foundation-model-development"
+        },
+        {
+          "title": "10.10 Distributed Training Fundamentals",
+          "slug": "1010-distributed-training-fundamentals"
+        },
+        {
+          "title": "10.11 Eval & Quality Frameworks (Reference Card)",
+          "slug": "1011-eval-quality-frameworks-reference-card"
+        },
+        {
+          "title": "10.12 Honcho & Long-Term Memory: Deeper Dive",
+          "slug": "1012-honcho-long-term-memory-deeper-dive"
+        },
+        {
+          "title": "10.13 Production Prompt Iteration Workflow",
+          "slug": "1013-production-prompt-iteration-workflow"
+        },
+        {
+          "title": "10.14 Streaming, Cost & Latency for Live Agent Traffic",
+          "slug": "1014-streaming-cost-latency-for-live-agent-traffic"
+        },
+        {
+          "title": "10.15 Quick-Fire Q&A for the JDs (50+ Additional Questions)",
+          "slug": "1015-quick-fire-qa-for-the-jds-50-additional-questions"
+        },
+        {
+          "title": "Final Words",
+          "slug": "final-words"
+        }
+      ]
+    },
+    {
+      "id": "part-11",
+      "num": "11",
+      "title": "Complete Interview-Questions Coverage",
+      "file": "part-11.html",
+      "subs": [
+        {
+          "title": "§11.1 LLM Fundamentals — Deep Transformer Dive",
+          "slug": "111-llm-fundamentals-deep-transformer-dive"
+        },
+        {
+          "title": "§11.2 Prompt Engineering — Advanced Techniques",
+          "slug": "112-prompt-engineering-advanced-techniques"
+        },
+        {
+          "title": "§11.3 RAG — Failure Scenarios (12+)",
+          "slug": "113-rag-failure-scenarios-12"
+        },
+        {
+          "title": "§11.4 AI Agents — Subagents & Context Engineering",
+          "slug": "114-ai-agents-subagents-context-engineering"
+        },
+        {
+          "title": "§11.5 Fine-Tuning — Domain-Specific Tuning",
+          "slug": "115-fine-tuning-domain-specific-tuning"
+        },
+        {
+          "title": "§11.6 Vector Databases — Drift, Multi-Tenant, Scaling",
+          "slug": "116-vector-databases-drift-multi-tenant-scaling"
+        },
+        {
+          "title": "§11.7 AI System Design — 6 New Scenarios",
+          "slug": "117-ai-system-design-6-new-scenarios"
+        },
+        {
+          "title": "§11.8 LLMOps — Prompt Caching, Ci/cd, Feature Flags",
+          "slug": "118-llmops-prompt-caching-cicd-feature-flags"
+        },
+        {
+          "title": "§11.9 Evaluation — G-Eval, Red Teaming, Golden Sets",
+          "slug": "119-evaluation-g-eval-red-teaming-golden-sets"
+        },
+        {
+          "title": "§11.10 AI Safety — GDPR, EU AI Act, Differential Privacy",
+          "slug": "1110-ai-safety-gdpr-eu-ai-act-differential-privacy"
+        },
+        {
+          "title": "§11.11 Multimodal AI — CLIP, Diffusion, Document Understanding",
+          "slug": "1111-multimodal-ai-clip-diffusion-document-understanding"
+        },
+        {
+          "title": "§11.12 AI Infrastructure — Paged Attention, GGUF, FSDP",
+          "slug": "1112-ai-infrastructure-paged-attention-gguf-fsdp"
+        },
+        {
+          "title": "§11.13 Coding Challenges — Python Solutions",
+          "slug": "1113-coding-challenges-python-solutions"
+        },
+        {
+          "title": "§11.14 Behavioral — 22 STAR Answers",
+          "slug": "1114-behavioral-22-star-answers"
+        },
+        {
+          "title": "§11.15 Rapid-Fire: 100 LLM Fundamentals Quick Answers",
+          "slug": "1115-rapid-fire-100-llm-fundamentals-quick-answers"
+        },
+        {
+          "title": "§11.16 Part 11 Summary — What You Now Have",
+          "slug": "1116-part-11-summary-what-you-now-have"
+        }
+      ]
+    }
+  ]
+}

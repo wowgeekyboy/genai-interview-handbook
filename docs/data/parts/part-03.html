@@ -1,0 +1,261 @@
+<h1>Part 3: RAG Architecture — Basic + 6 Advanced Variants</h1>
+<h2 id="31-the-vanilla-rag-pattern"><a class="anchor" href="#31-the-vanilla-rag-pattern" aria-label="Link to section">#</a>3.1 The Vanilla RAG Pattern</h2>
+<h3 id="the-pipeline"><a class="anchor" href="#the-pipeline" aria-label="Link to section">#</a>The Pipeline</h3>
+<pre><code>┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│  Query   │───►│  Embed   │───►│ Retrieve │───►│ Augment  │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘
+                                                      │
+                                                      ▼
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│ Response │◄───│  Decode  │◄───│   LLM    │◄───┘  Prompt  │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘
+</code></pre>
+<h3 id="the-code-production-ready"><a class="anchor" href="#the-code-production-ready" aria-label="Link to section">#</a>The Code (Production-Ready)</h3>
+<pre><code class="language-python">from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.vectorstores import Qdrant
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema.runnable import RunnablePassthrough
+from langchain.schema.output_parser import StrOutputParser
+
+# 1. Embed query
+embeddings = OpenAIEmbeddings(model=&quot;text-embedding-3-small&quot;)
+vector_db = Qdrant.from_documents(docs, embeddings, location=&quot;:memory:&quot;)
+
+# 2. Retrieval
+retriever = vector_db.as_retriever(search_kwargs={&quot;k&quot;: 5})
+
+# 3. Prompt template
+template = &quot;&quot;&quot;Answer the question based ONLY on the following context.
+If you can&#39;t answer from the context, say &quot;I don&#39;t know.&quot;
+
+Context:
+{context}
+
+Question: {question}
+&quot;&quot;&quot;
+prompt = ChatPromptTemplate.from_template(template)
+
+# 4. LLM
+llm = ChatOpenAI(model=&quot;gpt-4o-mini&quot;, temperature=0)
+
+# 5. Chain (LCEL)
+chain = (
+    {&quot;context&quot;: retriever, &quot;question&quot;: RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+answer = chain.invoke(&quot;What is our return policy?&quot;)
+</code></pre>
+<h3 id="when-vanilla-rag-works"><a class="anchor" href="#when-vanilla-rag-works" aria-label="Link to section">#</a>When Vanilla RAG Works</h3>
+<ul>
+<li>Single-domain Q&amp;A</li>
+<li>Small to medium corpus (&lt; 100k docs)</li>
+<li>Simple queries</li>
+<li>Low-stakes (FAQ, internal docs)</li>
+</ul>
+<h3 id="when-it-fails"><a class="anchor" href="#when-it-fails" aria-label="Link to section">#</a>When It Fails</h3>
+<ul>
+<li>&quot;What are the main themes across all our customer reviews?&quot; (global questions)</li>
+<li>&quot;Compare Q3 and Q4 revenue across regions&quot; (multi-hop)</li>
+<li>&quot;What did the CEO say in the Q1 meeting about strategy?&quot; (precise entity lookup)</li>
+<li>&quot;Find documents related to this case&quot; (relationship-based)</li>
+</ul>
+<p>For these, you need advanced variants.</p>
+<hr>
+<h2 id="32-the-6-advanced-rag-variants-master-this-table"><a class="anchor" href="#32-the-6-advanced-rag-variants-master-this-table" aria-label="Link to section">#</a>3.2 The 6 Advanced RAG Variants (Master This Table)</h2>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Core Idea</th>
+<th>Best For</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Self-RAG</strong></td>
+<td>LLM critiques own retrieval with special tokens</td>
+<td>High-stakes, factual</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td><strong>CRAG</strong> (Corrective)</td>
+<td>Grade chunks, fall back to web if wrong</td>
+<td>Stale knowledge base</td>
+<td>High</td>
+</tr>
+<tr>
+<td><strong>Adaptive RAG</strong></td>
+<td>Classifier routes query to specialized retriever</td>
+<td>Multi-domain</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td><strong>Agentic RAG</strong></td>
+<td>LLM with tools, multi-hop ReAct</td>
+<td>Complex reasoning</td>
+<td>High</td>
+</tr>
+<tr>
+<td><strong>HippoRAG</strong></td>
+<td>Knowledge graph + Personalized PageRank</td>
+<td>Healthcare, legal, relational</td>
+<td>High</td>
+</tr>
+<tr>
+<td><strong>GraphRAG</strong></td>
+<td>Microsoft — entity graph + community detection</td>
+<td>Global summarization</td>
+<td>Very High</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="33-self-rag"><a class="anchor" href="#33-self-rag" aria-label="Link to section">#</a>3.3 Self-RAG</h2>
+<h3 id="concept"><a class="anchor" href="#concept" aria-label="Link to section">#</a>Concept</h3>
+<p>LLM emits special tokens to critique its own retrieval and decide whether to retrieve again, skip, or accept.</p>
+<pre><code>[Retrieve] → search
+[IsRel]   → is the chunk relevant? (yes/no)
+[IsSup]   → is the answer supported? (yes/no)
+[IsUse]   → is the answer useful? (1-5)
+</code></pre>
+<h3 id="when-to-use"><a class="anchor" href="#when-to-use" aria-label="Link to section">#</a>When to Use</h3>
+<ul>
+<li>Medical, legal, scientific Q&amp;A where hallucination is unacceptable</li>
+<li>Cost-sensitive (skip retrieval when possible)</li>
+<li>Quality &gt; cost</li>
+</ul>
+<h3 id="trade-off"><a class="anchor" href="#trade-off" aria-label="Link to section">#</a>Trade-off</h3>
+<p>2-3x more LLM calls (each step uses tokens). But fewer hallucinations.</p>
+<hr>
+<h2 id="34-corrective-rag-crag"><a class="anchor" href="#34-corrective-rag-crag" aria-label="Link to section">#</a>3.4 Corrective RAG (CRAG)</h2>
+<h3 id="concept"><a class="anchor" href="#concept" aria-label="Link to section">#</a>Concept</h3>
+<p>After retrieval, grade each chunk as correct/ambiguous/incorrect. For incorrect chunks, fall back to web search.</p>
+<pre><code>Retrieve → Grade each chunk:
+  ├── Correct → Use as-is
+  ├── Ambiguous → Combine with web search
+  └── Incorrect → Discard, trigger web search
+        ↓
+   Re-rank → Generate
+</code></pre>
+<h3 id="when-to-use"><a class="anchor" href="#when-to-use" aria-label="Link to section">#</a>When to Use</h3>
+<ul>
+<li>Stale knowledge base (docs older than reality)</li>
+<li>Can tolerate web search cost</li>
+<li>Need to combine internal + external knowledge</li>
+</ul>
+<hr>
+<h2 id="35-adaptive-rag"><a class="anchor" href="#35-adaptive-rag" aria-label="Link to section">#</a>3.5 Adaptive RAG</h2>
+<h3 id="concept"><a class="anchor" href="#concept" aria-label="Link to section">#</a>Concept</h3>
+<p>A classifier (often a smaller LLM) routes queries to the appropriate retriever.</p>
+<pre><code>Query → Classifier
+  ├── Simple factual → small embedder → vector search
+  ├── SQL-needed → text-to-SQL
+  ├── Time-sensitive → web search
+  └── Multi-step → agentic RAG
+</code></pre>
+<h3 id="when-to-use"><a class="anchor" href="#when-to-use" aria-label="Link to section">#</a>When to Use</h3>
+<ul>
+<li>Multi-domain system (some queries need docs, others need DB)</li>
+<li>Cost optimization (use expensive retrievers only when needed)</li>
+<li>Heterogeneous data sources</li>
+</ul>
+<hr>
+<h2 id="36-agentic-rag"><a class="anchor" href="#36-agentic-rag" aria-label="Link to section">#</a>3.6 Agentic RAG</h2>
+<h3 id="concept"><a class="anchor" href="#concept" aria-label="Link to section">#</a>Concept</h3>
+<p>LLM with tools. Enters ReAct loop: think → act → observe → repeat.</p>
+<pre><code class="language-python">from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
+from langchain_community.tools import WikipediaQueryRun
+
+llm = ChatOpenAI(model=&quot;gpt-4o&quot;)
+tools = [search_docs, sql_query, web_search, calculator]
+
+agent = create_react_agent(llm, tools)
+
+# Agent can chain: vector search → SQL → calculator
+result = agent.invoke({
+    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;What&#39;s Q3 revenue growth?&quot;}]
+})
+</code></pre>
+<h3 id="when-to-use"><a class="anchor" href="#when-to-use" aria-label="Link to section">#</a>When to Use</h3>
+<ul>
+<li>Multi-hop reasoning (Q → need fact A → need fact B → answer)</li>
+<li>Complex tasks requiring multiple tools</li>
+<li>Dynamic workflow</li>
+</ul>
+<h3 id="trade-off"><a class="anchor" href="#trade-off" aria-label="Link to section">#</a>Trade-off</h3>
+<p>Most expensive (many LLM calls). Use only when simpler RAG fails.</p>
+<hr>
+<h2 id="37-hipporag"><a class="anchor" href="#37-hipporag" aria-label="Link to section">#</a>3.7 HippoRAG</h2>
+<h3 id="concept"><a class="anchor" href="#concept" aria-label="Link to section">#</a>Concept</h3>
+<p>Build a knowledge graph during indexing. At query time, use Personalized PageRank to find related entities — mimics human associative memory.</p>
+<pre><code>Indexing:
+  Documents → Extract entities &amp; relations → Build KG
+Querying:
+  Query → Extract entities → Personalized PageRank on KG → Related entities → Their contexts → LLM
+</code></pre>
+<h3 id="when-to-use"><a class="anchor" href="#when-to-use" aria-label="Link to section">#</a>When to Use</h3>
+<ul>
+<li>Healthcare (patient → conditions → treatments)</li>
+<li>Legal (case → precedents → citations)</li>
+<li>Multi-hop reasoning over entity relationships</li>
+</ul>
+<h3 id="trade-off"><a class="anchor" href="#trade-off" aria-label="Link to section">#</a>Trade-off</h3>
+<p>Expensive indexing (NER + graph construction). Worth it for relational data.</p>
+<hr>
+<h2 id="38-graphrag-microsoft"><a class="anchor" href="#38-graphrag-microsoft" aria-label="Link to section">#</a>3.8 GraphRAG (Microsoft)</h2>
+<h3 id="concept"><a class="anchor" href="#concept" aria-label="Link to section">#</a>Concept</h3>
+<p>Two-stage process: indexing builds an entity graph and detects communities, each summarized. Query time can do local search (around entities) or global search (community summaries).</p>
+<pre><code>Indexing (slow, hours):
+  Documents → Chunk → Extract entities → Build graph → Detect communities → Summarize each community
+Querying:
+  ├── Local search: find relevant communities + entities
+  └── Global search: aggregate across community summaries
+</code></pre>
+<h3 id="when-to-use"><a class="anchor" href="#when-to-use" aria-label="Link to section">#</a>When to Use</h3>
+<ul>
+<li>Global questions: &quot;What are the main themes?&quot;</li>
+<li>Multi-document synthesis</li>
+<li>Corpus-level analysis (10k+ documents)</li>
+</ul>
+<h3 id="trade-off"><a class="anchor" href="#trade-off" aria-label="Link to section">#</a>Trade-off</h3>
+<p>Very expensive indexing (one-time cost). Excellent for &quot;summarize all of X&quot; queries that vanilla RAG fails on.</p>
+<hr>
+<h2 id="39-hybrid-search-bm25-dense-rrf"><a class="anchor" href="#39-hybrid-search-bm25-dense-rrf" aria-label="Link to section">#</a>3.9 Hybrid Search (BM25 + Dense + RRF)</h2>
+<h3 id="the-problem"><a class="anchor" href="#the-problem" aria-label="Link to section">#</a>The Problem</h3>
+<p>Dense embeddings miss exact keyword matches. Sparse (BM25) misses semantic similarity. Combine both.</p>
+<h3 id="reciprocal-rank-fusion-rrf"><a class="anchor" href="#reciprocal-rank-fusion-rrf" aria-label="Link to section">#</a>Reciprocal Rank Fusion (RRF)</h3>
+<pre><code class="language-python">def rrf_score(rank, k=60):
+    return 1 / (k + rank)
+
+# Final score for a document = sum of RRF scores from each retriever
+# Example:
+#   BM25 rank 2: rrf = 1/62
+#   Dense rank 5: rrf = 1/65
+#   Combined: 1/62 + 1/65 = 0.0316
+</code></pre>
+<h3 id="qdrant-native-support"><a class="anchor" href="#qdrant-native-support" aria-label="Link to section">#</a>Qdrant Native Support</h3>
+<pre><code class="language-python">from qdrant_client.models import SparseVector
+
+# Hybrid query
+results = client.search(
+    collection_name=&quot;docs&quot;,
+    query_vector=dense_embedding,    # semantic
+    sparse_vector=sparse_embedding,  # BM25
+    fusion=&quot;rrf&quot;  # automatic reciprocal rank fusion
+)
+</code></pre>
+<hr>
+<h2 id="310-interview-framework-for-which-rag-would-you-use"><a class="anchor" href="#310-interview-framework-for-which-rag-would-you-use" aria-label="Link to section">#</a>3.10 Interview Framework for &quot;Which RAG Would You Use?&quot;</h2>
+<p><strong>Format</strong>: &quot;For [X use case], I&#39;d use [Strategy] because [reason]. Trade-off is [trade-off].&quot;</p>
+<p><strong>Examples:</strong></p>
+<ul>
+<li>&quot;For a customer support FAQ, I&#39;d use <strong>Vanilla RAG</strong> because the corpus is small and questions are simple. Trade-off: no global summarization.&quot;</li>
+<li>&quot;For medical Q&amp;A, I&#39;d use <strong>Self-RAG</strong> because hallucination is unacceptable. Trade-off: 3x cost.&quot;</li>
+<li>&quot;For &#39;summarize themes in 50k reviews&#39;, I&#39;d use <strong>GraphRAG</strong> because vanilla RAG fails on global questions. Trade-off: expensive indexing.&quot;</li>
+<li>&quot;For a multi-domain system with SQL + docs, I&#39;d use <strong>Adaptive RAG</strong> because each query type needs different retrieval. Trade-off: classifier errors route wrong.&quot;</li>
+<li>&quot;For legal case research, I&#39;d use <strong>HippoRAG</strong> because precedents have rich relationships. Trade-off: graph construction cost.&quot;</li>
+</ul>
+<hr>

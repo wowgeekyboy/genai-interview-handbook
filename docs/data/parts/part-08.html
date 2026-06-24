@@ -1,0 +1,1170 @@
+<h1>Part 8: Cutting-Edge 2025/2026 + Rapid-Fire Q&amp;A</h1>
+<h2 id="81-reasoning-models-o1-o3"><a class="anchor" href="#81-reasoning-models-o1-o3" aria-label="Link to section">#</a>8.1 Reasoning Models (o1, o3)</h2>
+<h3 id="what-they-do"><a class="anchor" href="#what-they-do" aria-label="Link to section">#</a>What They Do</h3>
+<p>Reasoning models (OpenAI o1, o3) do <strong>chain-of-thought at inference time</strong> — they spend more compute &quot;thinking&quot; before answering. Much better at math, coding, multi-step planning.</p>
+<h3 id="implications"><a class="anchor" href="#implications" aria-label="Link to section">#</a>Implications</h3>
+<ul>
+<li>Higher latency (30s+ vs 2s for non-reasoning models)</li>
+<li>Higher cost per query</li>
+<li>Best for: complex reasoning, math, planning</li>
+<li>Not worth it for: simple Q&amp;A, RAG with clear context</li>
+</ul>
+<h3 id="test-time-compute-scaling"><a class="anchor" href="#test-time-compute-scaling" aria-label="Link to section">#</a>Test-Time Compute Scaling</h3>
+<p>The insight: more compute at inference = better answers. Use for hard problems only.</p>
+<hr>
+<h2 id="82-inference-optimization"><a class="anchor" href="#82-inference-optimization" aria-label="Link to section">#</a>8.2 Inference Optimization</h2>
+<h3 id="continuous-batching"><a class="anchor" href="#continuous-batching" aria-label="Link to section">#</a>Continuous Batching</h3>
+<p>Process multiple requests in parallel, with each at a different point in generation. 10-20x throughput vs naive batching.</p>
+<h3 id="flash-attention"><a class="anchor" href="#flash-attention" aria-label="Link to section">#</a>Flash Attention</h3>
+<p>Memory-efficient attention that doesn&#39;t materialize the full N×N attention matrix. 2-4x faster training, 10x less memory.</p>
+<h3 id="paged-attention-vllm"><a class="anchor" href="#paged-attention-vllm" aria-label="Link to section">#</a>Paged Attention (VLLM)</h3>
+<p>Treats the KV cache like virtual memory with paging. Enables many concurrent requests on one GPU.</p>
+<h3 id="speculative-decoding"><a class="anchor" href="#speculative-decoding" aria-label="Link to section">#</a>Speculative Decoding</h3>
+<p>Use a small &quot;draft&quot; model to propose tokens, then verify with large model in parallel. 2-3x speedup.</p>
+<h3 id="kv-cache-optimization"><a class="anchor" href="#kv-cache-optimization" aria-label="Link to section">#</a>KV Cache Optimization</h3>
+<ul>
+<li>Quantize the KV cache (int8)</li>
+<li>Share KV across requests with same prefix (prefix caching)</li>
+<li>Offload to CPU when GPU memory tight</li>
+</ul>
+<hr>
+<h2 id="83-mixture-of-experts-moe"><a class="anchor" href="#83-mixture-of-experts-moe" aria-label="Link to section">#</a>8.3 Mixture of Experts (MOE)</h2>
+<h3 id="concept"><a class="anchor" href="#concept" aria-label="Link to section">#</a>Concept</h3>
+<p>Instead of one giant model, have many &quot;expert&quot; sub-networks. For each token, route to top-K experts.</p>
+<pre><code>Input → Router (small NN) → Select top-2 experts → Combine outputs
+</code></pre>
+<h3 id="examples"><a class="anchor" href="#examples" aria-label="Link to section">#</a>Examples</h3>
+<ul>
+<li>Mixtral 8x7B: 8 experts, route to top-2 = 13B active params</li>
+<li>GPT-4 rumored to be 8x220B MoE = 1.76T total, ~280B active</li>
+</ul>
+<h3 id="why-it-matters"><a class="anchor" href="#why-it-matters" aria-label="Link to section">#</a>Why It Matters</h3>
+<ul>
+<li>More total capacity without proportional compute cost</li>
+<li>Sparse activation (only some experts fire per token)</li>
+<li>Trade-off: harder to deploy (need to load all experts)</li>
+</ul>
+<hr>
+<h2 id="84-quantization"><a class="anchor" href="#84-quantization" aria-label="Link to section">#</a>8.4 Quantization</h2>
+<h3 id="the-levels"><a class="anchor" href="#the-levels" aria-label="Link to section">#</a>The Levels</h3>
+<table>
+<thead>
+<tr>
+<th>Precision</th>
+<th>Memory per param</th>
+<th>Quality Loss</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>fp32</strong></td>
+<td>4 bytes</td>
+<td>None (baseline)</td>
+</tr>
+<tr>
+<td><strong>fp16</strong></td>
+<td>2 bytes</td>
+<td>Negligible</td>
+</tr>
+<tr>
+<td><strong>bf16</strong></td>
+<td>2 bytes</td>
+<td>Negligible</td>
+</tr>
+<tr>
+<td><strong>int8</strong></td>
+<td>1 byte</td>
+<td>0.1-1%</td>
+</tr>
+<tr>
+<td><strong>int4 (GPTQ)</strong></td>
+<td>0.5 bytes</td>
+<td>1-3%</td>
+</tr>
+<tr>
+<td><strong>int4 (AWQ)</strong></td>
+<td>0.5 bytes</td>
+<td>0.5-2%</td>
+</tr>
+<tr>
+<td><strong>int2</strong></td>
+<td>0.25 bytes</td>
+<td>5-15% (aggressive)</td>
+</tr>
+</tbody></table>
+<h3 id="when-to-use"><a class="anchor" href="#when-to-use" aria-label="Link to section">#</a>When to Use</h3>
+<ul>
+<li><strong>fp16/bf16</strong>: Always for training/inference</li>
+<li><strong>int8</strong>: When memory-constrained (1.5B model on consumer GPU)</li>
+<li><strong>int4 (GPTQ/AWQ)</strong>: Edge deployment, 7B model on phone</li>
+</ul>
+<hr>
+<h2 id="85-the-200-rapid-fire-qa"><a class="anchor" href="#85-the-200-rapid-fire-qa" aria-label="Link to section">#</a>8.5 The 200+ Rapid-Fire Q&amp;A</h2>
+<h3 id="section-a-fundamentals-30-questions"><a class="anchor" href="#section-a-fundamentals-30-questions" aria-label="Link to section">#</a>Section a: Fundamentals (30 Questions)</h3>
+<p><strong>Q1: What&#39;s the difference between AI, ML, and DL?</strong></p>
+<ul>
+<li>AI: any technique that makes machines smart</li>
+<li>ML: subset of AI that learns from data</li>
+<li>DL: subset of ML using deep neural networks</li>
+</ul>
+<p><strong>Q2: What&#39;s supervised vs unsupervised vs reinforcement learning?</strong></p>
+<ul>
+<li>Supervised: labeled data (input → output)</li>
+<li>Unsupervised: no labels (clustering, dim reduction)</li>
+<li>Reinforcement: agent learns from rewards</li>
+</ul>
+<p><strong>Q3: What&#39;s overfitting? How to prevent?</strong></p>
+<ul>
+<li>Model memorizes training data, fails on new data</li>
+<li>Prevent: more data, regularization (dropout, L2), cross-validation, simpler model</li>
+</ul>
+<p><strong>Q4: What&#39;s the bias-variance tradeoff?</strong></p>
+<ul>
+<li>High bias = underfitting (too simple)</li>
+<li>High variance = overfitting (too complex)</li>
+<li>Sweet spot: model complex enough to capture signal but not noise</li>
+</ul>
+<p><strong>Q5: Precision vs Recall?</strong></p>
+<ul>
+<li>Precision: of items labeled positive, how many are actually positive?</li>
+<li>Recall: of all actual positives, how many did we find?</li>
+<li>F1 = harmonic mean</li>
+</ul>
+<p><strong>Q6: What&#39;s a confusion matrix?</strong></p>
+<ul>
+<li>Table: actual vs predicted, 4 cells (TP, FP, TN, FN)</li>
+</ul>
+<p><strong>Q7: Why use cross-entropy loss for classification?</strong></p>
+<ul>
+<li>Measures difference between predicted probability and true label</li>
+<li>Heavily penalizes confident wrong answers</li>
+</ul>
+<p><strong>Q8: What&#39;s gradient descent?</strong></p>
+<ul>
+<li>Optimization: iteratively move parameters opposite to gradient of loss</li>
+<li>Variants: SGD, Adam, RMSprop</li>
+</ul>
+<p><strong>Q9: What&#39;s backpropagation?</strong></p>
+<ul>
+<li>Algorithm to compute gradients in neural nets</li>
+<li>Chain rule applied backward through the network</li>
+</ul>
+<p><strong>Q10: What&#39;s a neural network activation function?</strong></p>
+<ul>
+<li>Non-linear function applied to each layer&#39;s output</li>
+<li>ReLU, sigmoid, tanh, GELU, SwiGLU</li>
+</ul>
+<p><strong>Q11: What&#39;s the vanishing gradient problem?</strong></p>
+<ul>
+<li>Gradients become tiny in deep networks, early layers don&#39;t learn</li>
+<li>Solutions: residual connections, better activations (ReLU, GELU), batch norm</li>
+</ul>
+<p><strong>Q12: What&#39;s batch normalization?</strong></p>
+<ul>
+<li>Normalize layer inputs across batch</li>
+<li>Stabilizes training, allows higher learning rates</li>
+</ul>
+<p><strong>Q13: What&#39;s dropout?</strong></p>
+<ul>
+<li>Randomly zero out neurons during training</li>
+<li>Prevents overfitting, acts like ensemble</li>
+</ul>
+<p><strong>Q14: What&#39;s the difference between L1 and L2 regularization?</strong></p>
+<ul>
+<li>L1: sum of |weights| → sparse (some weights exactly 0)</li>
+<li>L2: sum of weights² → small but non-zero</li>
+</ul>
+<p><strong>Q15: What&#39;s transfer learning?</strong></p>
+<ul>
+<li>Take model trained on task A, fine-tune on task B</li>
+<li>Saves compute and data; works because features generalize</li>
+</ul>
+<p><strong>Q16: What&#39;s data augmentation?</strong></p>
+<ul>
+<li>Artificially expand training data with transformations</li>
+<li>Images: rotation, flip, crop</li>
+<li>Text: synonym replacement, back-translation</li>
+</ul>
+<p><strong>Q17: What&#39;s ensembling?</strong></p>
+<ul>
+<li>Combine predictions from multiple models</li>
+<li>Bagging, boosting, stacking</li>
+</ul>
+<p><strong>Q18: What&#39;s the curse of dimensionality?</strong></p>
+<ul>
+<li>As dimensions grow, data becomes sparse</li>
+<li>Distance metrics become less meaningful</li>
+<li>Need exponentially more data</li>
+</ul>
+<p><strong>Q19: What&#39;s dimensionality reduction?</strong></p>
+<ul>
+<li>Reduce number of features while preserving structure</li>
+<li>PCA (linear), t-SNE/UMAP (visualization)</li>
+</ul>
+<p><strong>Q20: What&#39;s the difference between generative and discriminative models?</strong></p>
+<ul>
+<li>Generative: model P(X, Y) or P(X) — can generate new samples</li>
+<li>Discriminative: model P(Y|X) — classify given input</li>
+<li>LLMs are generative</li>
+</ul>
+<p><strong>Q21: What&#39;s a GAN?</strong></p>
+<ul>
+<li>Generative Adversarial Network</li>
+<li>Generator creates fakes, discriminator distinguishes</li>
+<li>Both improve through competition</li>
+</ul>
+<p><strong>Q22: What&#39;s a VAE?</strong></p>
+<ul>
+<li>Variational Autoencoder</li>
+<li>Encoder maps to latent distribution, decoder samples</li>
+<li>Used for generation, anomaly detection</li>
+</ul>
+<p><strong>Q23: What&#39;s reinforcement learning from human feedback (RLHF)?</strong></p>
+<ul>
+<li>Train reward model on human preferences</li>
+<li>Use PPO to optimize LLM toward higher reward</li>
+<li>How ChatGPT was made</li>
+</ul>
+<p><strong>Q24: What&#39;s DPO?</strong></p>
+<ul>
+<li>Direct Preference Optimization</li>
+<li>Simpler than RLHF, no separate reward model</li>
+<li>Directly optimizes policy on preferences</li>
+</ul>
+<p><strong>Q25: What&#39;s knowledge distillation?</strong></p>
+<ul>
+<li>Train small &quot;student&quot; model to mimic large &quot;teacher&quot;</li>
+<li>Smaller, faster, retains much of teacher&#39;s capability</li>
+</ul>
+<p><strong>Q26: What&#39;s self-supervised learning?</strong></p>
+<ul>
+<li>Labels generated from data itself (next token, masked word)</li>
+<li>How LLMs are pre-trained</li>
+</ul>
+<p><strong>Q27: What&#39;s few-shot learning?</strong></p>
+<ul>
+<li>Model learns from few examples (in context, no weight updates)</li>
+<li>LLMs excel at this</li>
+</ul>
+<p><strong>Q28: What&#39;s zero-shot learning?</strong></p>
+<ul>
+<li>Model performs task with no examples</li>
+<li>LLMs can do this for many tasks</li>
+</ul>
+<p><strong>Q29: What&#39;s a foundation model?</strong></p>
+<ul>
+<li>Large model pre-trained on broad data, adaptable to many tasks</li>
+<li>Examples: GPT-4o, Claude, Llama, Gemini</li>
+</ul>
+<p><strong>Q30: What&#39;s a parameter?</strong></p>
+<ul>
+<li>Trainable weight in a neural network</li>
+<li>GPT-4o: ~1.8T parameters, Llama-3-70B: 70B</li>
+</ul>
+<h3 id="section-b-llms-transformers-30-questions"><a class="anchor" href="#section-b-llms-transformers-30-questions" aria-label="Link to section">#</a>Section B: LLMs &amp; Transformers (30 Questions)</h3>
+<p><strong>Q31: What&#39;s self-attention?</strong></p>
+<ul>
+<li>For each token, compute attention to all other tokens</li>
+<li>Captures long-range dependencies</li>
+</ul>
+<p><strong>Q32: Why are transformers parallelizable but RNNs not?</strong></p>
+<ul>
+<li>Transformers process all tokens at once</li>
+<li>RNNs are sequential by design</li>
+</ul>
+<p><strong>Q33: What&#39;s the difference between encoder and decoder?</strong></p>
+<ul>
+<li>Encoder: bidirectional, sees full context (BERT)</li>
+<li>Decoder: unidirectional, generates left-to-right (GPT)</li>
+</ul>
+<p><strong>Q34: What&#39;s positional encoding?</strong></p>
+<ul>
+<li>Adds position info since attention is permutation-invariant</li>
+<li>Sinusoidal (original) or learned (modern)</li>
+</ul>
+<p><strong>Q35: What&#39;s multi-head attention?</strong></p>
+<ul>
+<li>Multiple attention computations in parallel</li>
+<li>Each head learns different patterns</li>
+</ul>
+<p><strong>Q36: What&#39;s the difference between GPT and BERT?</strong></p>
+<ul>
+<li>GPT: decoder-only, generative</li>
+<li>BERT: encoder-only, bidirectional, for understanding</li>
+</ul>
+<p><strong>Q37: What&#39;s the context window?</strong></p>
+<ul>
+<li>Max tokens model can process at once</li>
+<li>GPT-4o: 128k, Claude: 200k, Gemini: 1M+</li>
+</ul>
+<p><strong>Q38: What happens when context is exceeded?</strong></p>
+<ul>
+<li>Truncation (lose information)</li>
+<li>Summarization (compress)</li>
+<li>Sliding window (process in chunks)</li>
+<li>Recurrence (RAG, memory)</li>
+</ul>
+<p><strong>Q39: What&#39;s temperature in LLM output?</strong></p>
+<ul>
+<li>Controls randomness: 0 = deterministic, 1 = creative</li>
+<li>Higher temperature = more diverse but possibly wrong</li>
+</ul>
+<p><strong>Q40: What&#39;s top-p (nucleus sampling)?</strong></p>
+<ul>
+<li>Sample from smallest set of tokens whose cumulative prob ≥ p</li>
+<li>p=0.9 means consider top 90% probability mass</li>
+</ul>
+<p><strong>Q41: What&#39;s top-k sampling?</strong></p>
+<ul>
+<li>Sample from top k most probable tokens</li>
+<li>Limits options regardless of distribution</li>
+</ul>
+<p><strong>Q42: What&#39;s a token?</strong></p>
+<ul>
+<li>Subword unit the model processes</li>
+<li>~4 chars in English, ~1 token per 0.75 words</li>
+</ul>
+<p><strong>Q43: How do you count tokens?</strong></p>
+<ul>
+<li><code>tiktoken</code> library for OpenAI models</li>
+<li>Anthropic has its own tokenizer</li>
+<li>Important for cost calculation</li>
+</ul>
+<p><strong>Q44: What&#39;s the difference between base and instruct models?</strong></p>
+<ul>
+<li>Base: pre-trained, continues text</li>
+<li>Instruct: fine-tuned to follow instructions</li>
+</ul>
+<p><strong>Q45: What&#39;s the &quot;lost in the middle&quot; problem?</strong></p>
+<ul>
+<li>LLMs attend better to start and end of long context</li>
+<li>Middle information is often ignored</li>
+</ul>
+<p><strong>Q46: How do you reduce hallucination?</strong></p>
+<ul>
+<li>RAG (ground in real data)</li>
+<li>Lower temperature</li>
+<li>Chain-of-thought prompting</li>
+<li>Citations in responses</li>
+<li>Self-consistency</li>
+</ul>
+<p><strong>Q47: What&#39;s retrieval-augmented generation (RAG)?</strong></p>
+<ul>
+<li>LLM generates with context retrieved from external knowledge base</li>
+<li>Reduces hallucination, adds fresh knowledge</li>
+</ul>
+<p><strong>Q48: What&#39;s fine-tuning vs RAG?</strong></p>
+<ul>
+<li>Fine-tuning: bake knowledge into weights (static)</li>
+<li>RAG: retrieve at query time (dynamic)</li>
+</ul>
+<p><strong>Q49: What&#39;s the &quot;needle in a haystack&quot; test?</strong></p>
+<ul>
+<li>Place specific info at various positions in long context</li>
+<li>Test if LLM can recall it</li>
+<li>Most models do well at start/end, worse in middle</li>
+</ul>
+<p><strong>Q50: What&#39;s prompt injection?</strong></p>
+<ul>
+<li>Malicious user input that overrides system instructions</li>
+<li>Defense: input validation, output filtering, sandboxing</li>
+</ul>
+<p><strong>Q51: What&#39;s indirect prompt injection?</strong></p>
+<ul>
+<li>Attacker plants instructions in external data (web page, doc)</li>
+<li>LLM ingests and follows them</li>
+<li>Defense: treat external data as untrusted</li>
+</ul>
+<p><strong>Q52: What&#39;s the difference between GPT-4o and GPT-4o mini?</strong></p>
+<ul>
+<li>mini: smaller, faster, cheaper, slightly less capable</li>
+<li>Use mini for 80% of simple queries</li>
+</ul>
+<p><strong>Q53: What&#39;s a mixture of experts (MoE)?</strong></p>
+<ul>
+<li>Multiple expert sub-networks, route tokens to top-K</li>
+<li>More capacity without proportional compute</li>
+</ul>
+<p><strong>Q54: What&#39;s speculative decoding?</strong></p>
+<ul>
+<li>Draft tokens with small model, verify with large in parallel</li>
+<li>2-3x speedup</li>
+</ul>
+<p><strong>Q55: What&#39;s the KV cache?</strong></p>
+<ul>
+<li>Cached key-value pairs for previously generated tokens</li>
+<li>Avoids recomputation, enables efficient decoding</li>
+</ul>
+<p><strong>Q56: What&#39;s Flash Attention?</strong></p>
+<ul>
+<li>Memory-efficient attention algorithm</li>
+<li>Avoids materializing N×N attention matrix</li>
+</ul>
+<p><strong>Q57: What&#39;s paged attention (vLLM)?</strong></p>
+<ul>
+<li>Treats KV cache like virtual memory with paging</li>
+<li>Enables many concurrent requests</li>
+</ul>
+<p><strong>Q58: What&#39;s quantization in the context of LLMs?</strong></p>
+<ul>
+<li>Reduce precision of weights (fp32 → int8 → int4)</li>
+<li>Less memory, faster inference, slight quality loss</li>
+</ul>
+<p><strong>Q59: What&#39;s Mamba / state space models?</strong></p>
+<ul>
+<li>Alternative to transformers, linear complexity</li>
+<li>Better for very long sequences</li>
+</ul>
+<p><strong>Q60: What&#39;s the EU AI Act?</strong></p>
+<ul>
+<li>EU regulation classifying AI by risk level</li>
+<li>High-risk systems need transparency, human oversight</li>
+</ul>
+<h3 id="section-c-rag-30-questions"><a class="anchor" href="#section-c-rag-30-questions" aria-label="Link to section">#</a>Section C: RAG (30 Questions)</h3>
+<p><strong>Q61: What&#39;s the basic RAG pipeline?</strong></p>
+<ul>
+<li>Embed query → retrieve top-k chunks → augment prompt → generate</li>
+</ul>
+<p><strong>Q62: Why use RAG instead of just making the LLM larger?</strong></p>
+<ul>
+<li>Fresh data, citations, smaller model, lower cost, less hallucination</li>
+</ul>
+<p><strong>Q63: What&#39;s the difference between dense and sparse retrieval?</strong></p>
+<ul>
+<li>Dense: semantic via embeddings (handles synonyms)</li>
+<li>Sparse: keyword (BM25) (precise keyword matching)</li>
+<li>Hybrid combines both</li>
+</ul>
+<p><strong>Q64: What&#39;s BM25?</strong></p>
+<ul>
+<li>Best Match 25, classic ranking function</li>
+<li>Based on term frequency, inverse document frequency, document length</li>
+</ul>
+<p><strong>Q65: What&#39;s hybrid search?</strong></p>
+<ul>
+<li>Combines dense + sparse retrieval</li>
+<li>Better than either alone</li>
+</ul>
+<p><strong>Q66: What&#39;s RRF (Reciprocal Rank Fusion)?</strong></p>
+<ul>
+<li>Combines rankings from multiple retrievers</li>
+<li>Score = Σ 1/(k + rank), k=60 typical</li>
+</ul>
+<p><strong>Q67: What&#39;s semantic chunking?</strong></p>
+<ul>
+<li>Split text where embedding similarity drops (topic shift)</li>
+<li>More meaningful chunks than fixed-size</li>
+</ul>
+<p><strong>Q68: What&#39;s the parent document retriever?</strong></p>
+<ul>
+<li>Index small chunks, retrieve large parent chunks</li>
+<li>Precise search + rich context</li>
+</ul>
+<p><strong>Q69: What&#39;s a re-ranker?</strong></p>
+<ul>
+<li>Model that scores query-document relevance after retrieval</li>
+<li>Cross-encoder more accurate than bi-encoder but slower</li>
+</ul>
+<p><strong>Q70: What&#39;s HyDE (Hypothetical Document Embeddings)?</strong></p>
+<ul>
+<li>Generate hypothetical answer, embed it, use for retrieval</li>
+<li>Better than embedding raw query for some cases</li>
+</ul>
+<p><strong>Q71: What&#39;s multi-query retrieval?</strong></p>
+<ul>
+<li>Generate multiple query variations, retrieve for each</li>
+<li>Increases recall</li>
+</ul>
+<p><strong>Q72: What&#39;s step-back prompting?</strong></p>
+<ul>
+<li>Generate broader/abstract question, retrieve for both</li>
+<li>Gets both specific and general context</li>
+</ul>
+<p><strong>Q73: What&#39;s Self-RAG?</strong></p>
+<ul>
+<li>LLM critiques own retrieval with special tokens</li>
+<li>Decides to retrieve again, skip, or accept</li>
+</ul>
+<p><strong>Q74: What&#39;s CRAG (Corrective RAG)?</strong></p>
+<ul>
+<li>Grade chunks, fall back to web search for bad ones</li>
+<li>Combines internal + external knowledge</li>
+</ul>
+<p><strong>Q75: What&#39;s Adaptive RAG?</strong></p>
+<ul>
+<li>Classifier routes query to specialized retriever</li>
+<li>Different queries need different retrieval</li>
+</ul>
+<p><strong>Q76: What&#39;s Agentic RAG?</strong></p>
+<ul>
+<li>LLM with retrieval tools, multi-step ReAct</li>
+<li>Can chain multiple retrievers</li>
+</ul>
+<p><strong>Q77: What&#39;s HippoRAG?</strong></p>
+<ul>
+<li>Knowledge graph + Personalized PageRank</li>
+<li>Best for relational queries</li>
+</ul>
+<p><strong>Q78: What&#39;s GraphRAG?</strong></p>
+<ul>
+<li>Microsoft&#39;s: entity graph + community detection + summaries</li>
+<li>Best for global summarization over large corpora</li>
+</ul>
+<p><strong>Q79: How do you evaluate RAG?</strong></p>
+<ul>
+<li>RAGAS: Faithfulness, Answer Relevancy, Context Precision, Context Recall</li>
+<li>Human eval on golden set</li>
+</ul>
+<p><strong>Q80: What&#39;s Context Precision?</strong></p>
+<ul>
+<li>Of retrieved chunks, what fraction are relevant?</li>
+<li>High precision = less noise in context</li>
+</ul>
+<p><strong>Q81: What&#39;s Context Recall?</strong></p>
+<ul>
+<li>Of needed information, what fraction did we retrieve?</li>
+<li>High recall = no missing info</li>
+</ul>
+<p><strong>Q82: What&#39;s Faithfulness?</strong></p>
+<ul>
+<li>Is the answer grounded in the context?</li>
+<li>Detects hallucination</li>
+</ul>
+<p><strong>Q83: What&#39;s Answer Relevancy?</strong></p>
+<ul>
+<li>Does the answer address the question?</li>
+<li>Detects off-topic responses</li>
+</ul>
+<p><strong>Q84: What&#39;s embedding drift?</strong></p>
+<ul>
+<li>Distribution of embeddings changes over time</li>
+<li>Re-embed if model changes or data shifts</li>
+</ul>
+<p><strong>Q85: What&#39;s the difference between cosine similarity and dot product?</strong></p>
+<ul>
+<li>Cosine: angle only (normalized)</li>
+<li>Dot: angle + magnitude</li>
+</ul>
+<p><strong>Q86: What&#39;s HNSW?</strong></p>
+<ul>
+<li>Hierarchical Navigable Small World</li>
+<li>Graph-based approximate nearest neighbor</li>
+</ul>
+<p><strong>Q87: What&#39;s IVF (Inverted File Index)?</strong></p>
+<ul>
+<li>Cluster vectors, search only relevant clusters</li>
+<li>Faster than exhaustive for large datasets</li>
+</ul>
+<p><strong>Q88: What&#39;s product quantization (PQ)?</strong></p>
+<ul>
+<li>Compress vectors by splitting into sub-vectors and quantizing</li>
+<li>16-32x memory reduction</li>
+</ul>
+<p><strong>Q89: What&#39;s scalar quantization?</strong></p>
+<ul>
+<li>Convert float32 to int8</li>
+<li>4x memory reduction, minimal quality loss</li>
+</ul>
+<p><strong>Q90: What&#39;s Matryoshka representation learning?</strong></p>
+<ul>
+<li>Train embeddings to be usable at multiple dimensions</li>
+<li>Store at 256 dims instead of 1536, 3x savings</li>
+</ul>
+<h3 id="section-d-agents-orchestration-30-questions"><a class="anchor" href="#section-d-agents-orchestration-30-questions" aria-label="Link to section">#</a>Section D: Agents &amp; Orchestration (30 Questions)</h3>
+<p><strong>Q91: What is an AI agent?</strong></p>
+<ul>
+<li>LLM that can take actions (use tools) to accomplish goals</li>
+<li>Loop: think → act → observe → repeat</li>
+</ul>
+<p><strong>Q92: What&#39;s the ReAct pattern?</strong></p>
+<ul>
+<li>Reason + Act in interleaved steps</li>
+<li>Thought → Action → Observation → repeat</li>
+</ul>
+<p><strong>Q93: What&#39;s function calling / tool use?</strong></p>
+<ul>
+<li>LLM emits structured call to external function</li>
+<li>Receives result, continues</li>
+</ul>
+<p><strong>Q94: What&#39;s LangChain?</strong></p>
+<ul>
+<li>Framework for building LLM applications</li>
+<li>Chains, agents, retrievers, memory</li>
+</ul>
+<p><strong>Q95: What&#39;s LangGraph?</strong></p>
+<ul>
+<li>Stateful orchestration framework (LangChain team)</li>
+<li>Supports cycles, persistence, human-in-loop</li>
+</ul>
+<p><strong>Q96: What&#39;s LCEL?</strong></p>
+<ul>
+<li>LangChain Expression Language</li>
+<li>Compose chains with <code>|</code> operator</li>
+</ul>
+<p><strong>Q97: What&#39;s a state machine in LangGraph?</strong></p>
+<ul>
+<li>Graph with nodes (work) and edges (transitions)</li>
+<li>State shared across nodes</li>
+</ul>
+<p><strong>Q98: What&#39;s a checkpointer?</strong></p>
+<ul>
+<li>Persists graph state across calls/sessions</li>
+<li>Postgres, Redis, in-memory options</li>
+</ul>
+<p><strong>Q99: What&#39;s thread_id in LangGraph?</strong></p>
+<ul>
+<li>Identifies a conversation/session</li>
+<li>Different threads = different memory</li>
+</ul>
+<p><strong>Q100: What&#39;s human-in-the-loop?</strong></p>
+<ul>
+<li>Pause workflow for human approval before sensitive actions</li>
+<li><code>interrupt_before=[&quot;sensitive_action&quot;]</code></li>
+</ul>
+<p><strong>Q101: What&#39;s the supervisor pattern?</strong></p>
+<ul>
+<li>Central agent delegates to worker agents</li>
+<li>Supervisor decides who acts next</li>
+</ul>
+<p><strong>Q102: What&#39;s a multi-agent system?</strong></p>
+<ul>
+<li>Multiple specialized agents collaborating</li>
+<li>E.g., researcher + writer + critic</li>
+</ul>
+<p><strong>Q103: What&#39;s AutoGen?</strong></p>
+<ul>
+<li>Microsoft&#39;s framework for multi-agent systems</li>
+<li>Agents converse to solve tasks</li>
+</ul>
+<p><strong>Q104: What&#39;s CrewAI?</strong></p>
+<ul>
+<li>Framework for role-based multi-agent systems</li>
+<li>Agents have roles, goals, backstories</li>
+</ul>
+<p><strong>Q105: What&#39;s the difference between agent and chain?</strong></p>
+<ul>
+<li>Chain: fixed sequence, deterministic</li>
+<li>Agent: dynamic, decides next step</li>
+</ul>
+<p><strong>Q106: When should you NOT use an agent?</strong></p>
+<ul>
+<li>Cost-sensitive (each step = LLM call)</li>
+<li>Need determinism</li>
+<li>Latency-critical</li>
+<li>Simple task (overkill)</li>
+</ul>
+<p><strong>Q107: What&#39;s the Plan-and-Execute pattern?</strong></p>
+<ul>
+<li>LLM creates full plan upfront, then executes</li>
+<li>Cheaper than ReAct for complex tasks</li>
+</ul>
+<p><strong>Q108: What&#39;s reflection / self-critique?</strong></p>
+<ul>
+<li>Agent reviews its own output and improves</li>
+<li>Generate → Critique → Improve → Final</li>
+</ul>
+<p><strong>Q109: What&#39;s tool consolidation?</strong></p>
+<ul>
+<li>Combine multiple tools into one smart tool</li>
+<li>Reduces LLM decision overhead</li>
+</ul>
+<p><strong>Q110: What&#39;s tool routing?</strong></p>
+<ul>
+<li>LLM picks which tool to call based on user intent</li>
+<li>Function calling handles this</li>
+</ul>
+<p><strong>Q111: What&#39;s parallel tool calling?</strong></p>
+<ul>
+<li>LLM calls multiple tools in single response</li>
+<li>All execute concurrently</li>
+</ul>
+<p><strong>Q112: What&#39;s an agent executor&#39;s max_iterations?</strong></p>
+<ul>
+<li>Hard limit on agent loop iterations</li>
+<li>Prevents infinite loops</li>
+</ul>
+<p><strong>Q113: How do you detect agent loops?</strong></p>
+<ul>
+<li>Track recent actions, detect repeated patterns</li>
+<li>Stop after N repeats</li>
+</ul>
+<p><strong>Q114: What&#39;s the A2A protocol?</strong></p>
+<ul>
+<li>Agent-to-agent communication standard</li>
+<li>Agents from different frameworks can collaborate</li>
+</ul>
+<p><strong>Q115: What&#39;s context engineering?</strong></p>
+<ul>
+<li>Carefully curating what goes into LLM context</li>
+<li>Including only what&#39;s needed</li>
+</ul>
+<p><strong>Q116: What&#39;s scratchpad / external memory?</strong></p>
+<ul>
+<li>Storage outside context window for large data</li>
+<li>Reference by ID in context</li>
+</ul>
+<p><strong>Q117: What&#39;s token-level streaming in agents?</strong></p>
+<ul>
+<li>Stream intermediate thoughts/actions to UI</li>
+<li>Better UX for long agent runs</li>
+</ul>
+<p><strong>Q118: What&#39;s sub-agent delegation?</strong></p>
+<ul>
+<li>Main agent spawns specialized sub-agents</li>
+<li>Each handles specific subtask</li>
+</ul>
+<p><strong>Q119: What&#39;s a tool schema?</strong></p>
+<ul>
+<li>JSON schema describing tool&#39;s name, params, returns</li>
+<li>LLM uses to decide when/how to call</li>
+</ul>
+<p><strong>Q120: What&#39;s tool result truncation?</strong></p>
+<ul>
+<li>Limit tool output size to fit context</li>
+<li>Summarize if too large</li>
+</ul>
+<h3 id="section-e-production-cloud-30-questions"><a class="anchor" href="#section-e-production-cloud-30-questions" aria-label="Link to section">#</a>Section E: Production &amp; Cloud (30 Questions)</h3>
+<p><strong>Q121: How do you handle LLM costs at scale?</strong></p>
+<ul>
+<li>Model cascading, caching, prompt caching, smaller embeddings, batching</li>
+</ul>
+<p><strong>Q122: What&#39;s semantic caching?</strong></p>
+<ul>
+<li>Cache LLM responses by query similarity</li>
+<li>Skip LLM if similar query recently answered</li>
+</ul>
+<p><strong>Q123: What&#39;s exact caching?</strong></p>
+<ul>
+<li>Cache by exact query string match</li>
+<li>Cheap but low hit rate</li>
+</ul>
+<p><strong>Q124: What&#39;s prompt caching?</strong></p>
+<ul>
+<li>Provider caches repeated prompt prefixes</li>
+<li>Anthropic: 90% off cached portion</li>
+</ul>
+<p><strong>Q125: What&#39;s model cascading?</strong></p>
+<ul>
+<li>Use cheap model first, escalate to expensive if needed</li>
+<li>Saves cost on simple queries</li>
+</ul>
+<p><strong>Q126: What&#39;s a rate limiter?</strong></p>
+<ul>
+<li>Limits requests per user/tenant</li>
+<li>Token bucket, sliding window</li>
+</ul>
+<p><strong>Q127: What&#39;s observability for LLMs?</strong></p>
+<ul>
+<li>Tracing each call: prompt, response, tokens, latency, cost</li>
+<li>LangSmith, Langfuse, Arize</li>
+</ul>
+<p><strong>Q128: What&#39;s LangSmith?</strong></p>
+<ul>
+<li>LangChain&#39;s official observability platform</li>
+<li>Tracing, evaluation, prompt hub</li>
+</ul>
+<p><strong>Q129: What&#39;s Langfuse?</strong></p>
+<ul>
+<li>Open-source LLM observability</li>
+<li>OpenTelemetry-compatible, GDPR-compliant</li>
+</ul>
+<p><strong>Q130: What&#39;s Arize Phoenix?</strong></p>
+<ul>
+<li>Open-source ML observability</li>
+<li>Embedding drift detection</li>
+</ul>
+<p><strong>Q131: What&#39;s a span in tracing?</strong></p>
+<ul>
+<li>A unit of work (LLM call, retrieval, tool call)</li>
+<li>Parent-child relationships</li>
+</ul>
+<p><strong>Q132: What&#39;s a golden dataset?</strong></p>
+<ul>
+<li>Hand-curated test cases with expected outputs</li>
+<li>Used for evaluation, regression testing</li>
+</ul>
+<p><strong>Q133: What&#39;s LLM-as-judge?</strong></p>
+<ul>
+<li>Use LLM to evaluate another LLM&#39;s outputs</li>
+<li>Scales eval but introduces bias</li>
+</ul>
+<p><strong>Q134: What&#39;s a CI/CD gate for prompts?</strong></p>
+<ul>
+<li>Tests that fail PR if prompt quality drops below threshold</li>
+<li>Prevents regressions</li>
+</ul>
+<p><strong>Q135: What&#39;s canary deployment?</strong></p>
+<ul>
+<li>New version on 5% traffic, compare metrics</li>
+<li>Rollback if regression</li>
+</ul>
+<p><strong>Q136: What&#39;s blue-green deployment?</strong></p>
+<ul>
+<li>Two identical environments, switch traffic</li>
+<li>Zero-downtime deployment</li>
+</ul>
+<p><strong>Q137: What&#39;s shadow traffic?</strong></p>
+<ul>
+<li>Replay production traffic through new version, don&#39;t serve output</li>
+<li>Compare to current version</li>
+</ul>
+<p><strong>Q138: What&#39;s prompt versioning?</strong></p>
+<ul>
+<li>Git-style versioning of prompts</li>
+<li>Tag, rollback, A/B test</li>
+</ul>
+<p><strong>Q139: What&#39;s token usage tracking?</strong></p>
+<ul>
+<li>Monitor tokens per request, per user, per feature</li>
+<li>Identify cost anomalies</li>
+</ul>
+<p><strong>Q140: What&#39;s a token budget?</strong></p>
+<ul>
+<li>Max tokens allowed per user/tenant/day</li>
+<li>Prevent abuse, control cost</li>
+</ul>
+<p><strong>Q141: What&#39;s circuit breaker pattern?</strong></p>
+<ul>
+<li>Stop calling failing service temporarily</li>
+<li>Prevent cascade failures</li>
+</ul>
+<p><strong>Q142: What&#39;s graceful degradation?</strong></p>
+<ul>
+<li>System continues working with reduced functionality</li>
+<li>E.g., fallback to cached responses</li>
+</ul>
+<p><strong>Q143: What&#39;s load balancing for LLM apps?</strong></p>
+<ul>
+<li>Distribute across multiple LLM providers</li>
+<li>Cost optimization, reliability</li>
+</ul>
+<p><strong>Q144: What&#39;s multi-region deployment?</strong></p>
+<ul>
+<li>Deploy in multiple geographic regions</li>
+<li>Lower latency, compliance</li>
+</ul>
+<p><strong>Q145: What&#39;s data residency?</strong></p>
+<ul>
+<li>Data stored/processed in specific region</li>
+<li>Compliance requirement (GDPR)</li>
+</ul>
+<p><strong>Q146: What&#39;s Azure AI Foundry?</strong></p>
+<ul>
+<li>Microsoft&#39;s end-to-end GenAI platform</li>
+<li>Prompt Flow, model catalog, RAG playground, eval</li>
+</ul>
+<p><strong>Q147: What&#39;s AWS Bedrock?</strong></p>
+<ul>
+<li>AWS&#39;s managed LLM service</li>
+<li>Multiple models (Claude, Llama, Mistral)</li>
+</ul>
+<p><strong>Q148: What&#39;s Google Vertex AI?</strong></p>
+<ul>
+<li>Google&#39;s AI platform</li>
+<li>Gemini models, vector search, agent builder</li>
+</ul>
+<p><strong>Q149: What&#39;s reserved capacity?</strong></p>
+<ul>
+<li>Pre-purchased compute at discount</li>
+<li>Azure, AWS both offer</li>
+</ul>
+<p><strong>Q150: What&#39;s pay-as-you-go?</strong></p>
+<ul>
+<li>Pay only for what you use</li>
+<li>More flexible, slightly higher per-unit cost</li>
+</ul>
+<h3 id="section-f-vector-dbs-embeddings-30-questions"><a class="anchor" href="#section-f-vector-dbs-embeddings-30-questions" aria-label="Link to section">#</a>Section F: Vector DBs &amp; Embeddings (30 Questions)</h3>
+<p><strong>Q151: What&#39;s a vector database?</strong></p>
+<ul>
+<li>DB optimized for similarity search over high-dim vectors</li>
+<li>Uses ANN algorithms (HNSW, IVF)</li>
+</ul>
+<p><strong>Q152: What&#39;s Qdrant?</strong></p>
+<ul>
+<li>Open-source vector DB written in Rust</li>
+<li>Excellent filtering, hybrid search</li>
+</ul>
+<p><strong>Q153: What&#39;s Pinecone?</strong></p>
+<ul>
+<li>Managed vector DB (serverless)</li>
+<li>Zero ops, but proprietary</li>
+</ul>
+<p><strong>Q154: What&#39;s Weaviate?</strong></p>
+<ul>
+<li>Open-source vector DB</li>
+<li>Built-in vectorization, hybrid search</li>
+</ul>
+<p><strong>Q155: What&#39;s Milvus?</strong></p>
+<ul>
+<li>Open-source vector DB</li>
+<li>Scales to billions of vectors</li>
+</ul>
+<p><strong>Q156: What&#39;s Chroma?</strong></p>
+<ul>
+<li>Lightweight vector DB for prototyping</li>
+<li>Embedded mode, simple API</li>
+</ul>
+<p><strong>Q157: What&#39;s pgvector?</strong></p>
+<ul>
+<li>Postgres extension for vector search</li>
+<li>Use if you already have Postgres</li>
+</ul>
+<p><strong>Q158: What&#39;s MongoDB Atlas Vector Search?</strong></p>
+<ul>
+<li>Vector search in MongoDB</li>
+<li>Use if you already have MongoDB</li>
+</ul>
+<p><strong>Q159: What&#39;s an embedding model?</strong></p>
+<ul>
+<li>Neural network that maps text to dense vector</li>
+<li>Similar text → similar vectors</li>
+</ul>
+<p><strong>Q160: What&#39;s the dimensionality of embeddings?</strong></p>
+<ul>
+<li>Number of floats in vector</li>
+<li>384, 768, 1024, 1536, 3072 typical</li>
+</ul>
+<p><strong>Q161: What&#39;s text-embedding-3-small?</strong></p>
+<ul>
+<li>OpenAI&#39;s default embedding model</li>
+<li>1536 dims, $0.02/1M tokens</li>
+</ul>
+<p><strong>Q162: What&#39;s BGE (BAAI General Embedding)?</strong></p>
+<ul>
+<li>Open-source embedding model family</li>
+<li>Strong quality, free</li>
+</ul>
+<p><strong>Q163: What&#39;s Cohere embed-v3?</strong></p>
+<ul>
+<li>Multilingual embedding model</li>
+<li>Good for non-English content</li>
+</ul>
+<p><strong>Q164: What&#39;s CLIP?</strong></p>
+<ul>
+<li>OpenAI&#39;s model that embeds text and images in same space</li>
+<li>Enables text-to-image search</li>
+</ul>
+<p><strong>Q165: What&#39;s multimodal embedding?</strong></p>
+<ul>
+<li>Single vector space for multiple modalities</li>
+<li>Text, image, audio share space</li>
+</ul>
+<p><strong>Q166: What&#39;s the difference between L2 and cosine distance?</strong></p>
+<ul>
+<li>L2 (Euclidean): magnitude-sensitive</li>
+<li>Cosine: angle-only, scale-invariant</li>
+</ul>
+<p><strong>Q167: What&#39;s an index in vector DB?</strong></p>
+<ul>
+<li>Data structure for fast ANN search</li>
+<li>HNSW, IVF, Flat (exact)</li>
+</ul>
+<p><strong>Q168: What&#39;s the recall of an ANN index?</strong></p>
+<ul>
+<li>Fraction of true nearest neighbors returned</li>
+<li>Trade-off with speed</li>
+</ul>
+<p><strong>Q169: What&#39;s metadata filtering?</strong></p>
+<ul>
+<li>Filter vectors by payload attributes</li>
+<li>E.g., <code>category = &quot;furniture&quot; AND price &lt; 500</code></li>
+</ul>
+<p><strong>Q170: What&#39;s sharding in vector DB?</strong></p>
+<ul>
+<li>Distribute vectors across multiple nodes</li>
+<li>For scale &gt; single-node capacity</li>
+</ul>
+<p><strong>Q171: What&#39;s replication?</strong></p>
+<ul>
+<li>Multiple copies of data for availability</li>
+<li>Read replicas, multi-region</li>
+</ul>
+<p><strong>Q172: What&#39;s the difference between vector DB and traditional search?</strong></p>
+<ul>
+<li>Vector: semantic similarity</li>
+<li>Traditional: keyword match (Elasticsearch)</li>
+</ul>
+<p><strong>Q173: What&#39;s Elasticsearch&#39;s role in RAG?</strong></p>
+<ul>
+<li>Hybrid retrieval (BM25 + vector)</li>
+<li>Mature, scales well</li>
+</ul>
+<p><strong>Q174: What&#39;s sparse embedding?</strong></p>
+<ul>
+<li>Vector with mostly zeros (like BM25)</li>
+<li>Good for keyword matching</li>
+</ul>
+<p><strong>Q175: What&#39;s SPLADE?</strong></p>
+<ul>
+<li>Learned sparse embedding model</li>
+<li>Better than BM25 for some cases</li>
+</ul>
+<p><strong>Q176: What&#39;s ColBERT?</strong></p>
+<ul>
+<li>Late-interaction retrieval model</li>
+<li>Per-token scoring, more accurate than bi-encoder</li>
+</ul>
+<p><strong>Q177: What&#39;s embedding normalization?</strong></p>
+<ul>
+<li>Scaling vector to unit length</li>
+<li>Required for cosine similarity</li>
+</ul>
+<p><strong>Q178: What&#39;s the difference between offline and online embeddings?</strong></p>
+<ul>
+<li>Offline: batch process documents</li>
+<li>Online: embed query at request time</li>
+</ul>
+<p><strong>Q179: What&#39;s embedding caching?</strong></p>
+<ul>
+<li>Cache computed embeddings</li>
+<li>Avoid re-embedding same text</li>
+</ul>
+<p><strong>Q180: What&#39;s embedding versioning?</strong></p>
+<ul>
+<li>Track which model version generated each embedding</li>
+<li>Important for migration, debugging</li>
+</ul>
+<h3 id="section-g-security-ethics-20-questions"><a class="anchor" href="#section-g-security-ethics-20-questions" aria-label="Link to section">#</a>Section G: Security &amp; Ethics (20 Questions)</h3>
+<p><strong>Q181: What is prompt injection?</strong></p>
+<ul>
+<li>User input that overrides system instructions</li>
+<li>Direct (user says it) or indirect (in retrieved data)</li>
+</ul>
+<p><strong>Q182: What is indirect prompt injection?</strong></p>
+<ul>
+<li>Instructions planted in external data the LLM reads</li>
+<li>E.g., malicious web page, poisoned document</li>
+</ul>
+<p><strong>Q183: What&#39;s the OWASP LLM Top 10?</strong></p>
+<ul>
+<li>Industry-standard list of LLM security risks</li>
+<li>Prompt injection, data leakage, etc.</li>
+</ul>
+<p><strong>Q184: What&#39;s embedding inversion?</strong></p>
+<ul>
+<li>Reverse-engineering original text from embeddings</li>
+<li>Mitigation: don&#39;t embed PII</li>
+</ul>
+<p><strong>Q185: What&#39;s differential privacy for LLMs?</strong></p>
+<ul>
+<li>Add noise during training to prevent memorizing specific examples</li>
+<li>Protects training data privacy</li>
+</ul>
+<p><strong>Q186: What&#39;s federated learning?</strong></p>
+<ul>
+<li>Train on distributed data without centralizing</li>
+<li>Privacy-preserving</li>
+</ul>
+<p><strong>Q187: What is PII?</strong></p>
+<ul>
+<li>Personally Identifiable Information</li>
+<li>Name, SSN, email, phone, address, etc.</li>
+</ul>
+<p><strong>Q188: What&#39;s the Luhn algorithm?</strong></p>
+<ul>
+<li>Validates credit card numbers</li>
+<li>Detects typos, false positives</li>
+</ul>
+<p><strong>Q189: What&#39;s Presidio?</strong></p>
+<ul>
+<li>Microsoft&#39;s PII detection/anonymization library</li>
+<li>50+ entity types, 10+ languages</li>
+</ul>
+<p><strong>Q190: What&#39;s data minimization?</strong></p>
+<ul>
+<li>Only collect/process data you need</li>
+<li>GDPR principle</li>
+</ul>
+<p><strong>Q191: What&#39;s the right to be forgotten?</strong></p>
+<ul>
+<li>GDPR: user can request data deletion</li>
+<li>Hard for LLMs (data baked into weights)</li>
+</ul>
+<p><strong>Q192: What&#39;s machine unlearning?</strong></p>
+<ul>
+<li>Remove specific data influence from trained model</li>
+<li>Active research area</li>
+</ul>
+<p><strong>Q193: What&#39;s RLHF safety?</strong></p>
+<ul>
+<li>Train reward model to penalize harmful outputs</li>
+<li>Use in fine-tuning</li>
+</ul>
+<p><strong>Q194: What&#39;s constitutional AI?</strong></p>
+<ul>
+<li>Anthropic&#39;s approach: AI critiques itself based on principles</li>
+<li>Reduces need for human labelers</li>
+</ul>
+<p><strong>Q195: What&#39;s a content filter?</strong></p>
+<ul>
+<li>Blocks harmful inputs/outputs</li>
+<li>Hate, violence, sexual, self-harm</li>
+</ul>
+<p><strong>Q196: What&#39;s Azure Content Safety?</strong></p>
+<ul>
+<li>Microsoft&#39;s content moderation API</li>
+<li>Multi-modal, configurable thresholds</li>
+</ul>
+<p><strong>Q197: What&#39;s a hallucination?</strong></p>
+<ul>
+<li>LLM generates plausible but false information</li>
+<li>Mitigation: RAG, lower temperature, citations</li>
+</ul>
+<p><strong>Q198: What&#39;s model bias?</strong></p>
+<ul>
+<li>Systematic errors in model predictions</li>
+<li>Can be demographic, cultural, etc.</li>
+</ul>
+<p><strong>Q199: What&#39;s AI alignment?</strong></p>
+<ul>
+<li>Ensuring AI goals match human goals</li>
+<li>Major research challenge</li>
+</ul>
+<p><strong>Q200: What&#39;s the EU AI Act?</strong></p>
+<ul>
+<li>Risk-based regulation of AI in EU</li>
+<li>Banned uses, high-risk requirements, transparency</li>
+</ul>
+<hr>
+<h2 id="86-behavioral-questions-star-framework"><a class="anchor" href="#86-behavioral-questions-star-framework" aria-label="Link to section">#</a>8.6 Behavioral Questions (STAR Framework)</h2>
+<h3 id="the-framework"><a class="anchor" href="#the-framework" aria-label="Link to section">#</a>The Framework</h3>
+<p><strong>S</strong>ituation — Context, project, challenge
+<strong>T</strong>ask — Your responsibility
+<strong>A</strong>ction — What you specifically did
+<strong>R</strong>esult — Quantified outcome</p>
+<h3 id="5-stories-to-have-ready"><a class="anchor" href="#5-stories-to-have-ready" aria-label="Link to section">#</a>5 Stories to Have Ready</h3>
+<p><strong>1. Challenging Project</strong></p>
+<blockquote>
+<p>&quot;S: Our RAG system was hitting 70% faithfulness, customer complaints rising.
+T: I needed to improve accuracy in 4 weeks.
+A: Analyzed failed queries, identified pattern: chunk boundaries broke mid-section. Switched to semantic chunking, added re-ranker, tuned prompts.
+R: Faithfulness went from 70% to 92%, customer complaints dropped 60%.&quot;</p>
+</blockquote>
+<p><strong>2. Technical Disagreement</strong></p>
+<blockquote>
+<p>&quot;S: Team wanted to use vanilla LangChain Agent for multi-step workflow.
+T: I advocated for LangGraph instead.
+A: Built spike in 2 days, demoed with real workload, showed better observability and persistence.
+R: Team aligned on LangGraph, we shipped 2 weeks earlier due to fewer bugs.&quot;</p>
+</blockquote>
+<p><strong>3. Failure &amp; Recovery</strong></p>
+<blockquote>
+<p>&quot;S: Deployed LLM chatbot to 10k users without proper evaluation.
+T: Bot started hallucinating policy details, customer service flooded with complaints.
+A: Rolled back, established RAGAS eval in CI/CD, created golden dataset, required eval to pass before deploy.
+R: Zero regressions since, eval catches 95% of issues pre-prod.&quot;</p>
+</blockquote>
+<p><strong>4. Tight Deadline</strong></p>
+<blockquote>
+<p>&quot;S: Sales event in 1 week, leadership wanted chatbot live.
+T: Ship minimum viable version, iterate later.
+A: Cut scope to top 20 FAQs, used simple RAG, deployed with feature flag for 10% rollout.
+R: Shipped on time, supported sales, iterated based on real usage post-event.&quot;</p>
+</blockquote>
+<p><strong>5. Mentorship</strong></p>
+<blockquote>
+<p>&quot;S: Junior engineer struggling with RAG architecture.
+T: Help them grow without taking over.
+A: Pair programmed weekly, reviewed their designs, gave them ownership of retrieval component.
+R: They shipped the retriever solo, got promoted, now mentor others.&quot;</p>
+</blockquote>
+<hr>

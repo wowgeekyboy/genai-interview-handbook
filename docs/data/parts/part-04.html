@@ -1,0 +1,163 @@
+<h1>Part 4: Agents, LangGraph, Orchestration</h1>
+<h2 id="41-agents-vs-chains-vs-graphs"><a class="anchor" href="#41-agents-vs-chains-vs-graphs" aria-label="Link to section">#</a>4.1 Agents vs Chains vs Graphs</h2>
+<h3 id="the-decision-tree"><a class="anchor" href="#the-decision-tree" aria-label="Link to section">#</a>The Decision Tree</h3>
+<pre><code>Is the workflow fixed and predictable?
+├── YES → Use Chain (LCEL)
+└── NO → Does it need cycles, persistence, or multi-agent?
+        ├── YES → Use LangGraph
+        └── NO → Does it need single-loop tool use?
+                ├── YES → Use AgentExecutor
+                └── NO → Use Chain
+</code></pre>
+<h3 id="visual-comparison"><a class="anchor" href="#visual-comparison" aria-label="Link to section">#</a>Visual Comparison</h3>
+<pre><code>CHAIN (LCEL):
+A → B → C → D   (DAG, one direction, no loops)
+
+AGENT (AgentExecutor):
+   ┌─→ think → act → observe ─┐
+   │                            │
+   └──────── (loop) ────────────┘
+
+GRAPH (LangGraph):
+   ┌─→ A → B ─┐
+   │          ↓
+   └─ D ←─ C ←┘
+   (cycles, branching, persistence)
+</code></pre>
+<h3 id="when-not-to-use-agents"><a class="anchor" href="#when-not-to-use-agents" aria-label="Link to section">#</a>When Not to Use Agents</h3>
+<ul>
+<li>Cost-sensitive (each step = LLM call)</li>
+<li>Need determinism (regulated industries)</li>
+<li>Latency-critical (&lt; 500ms)</li>
+<li>Task is simple (overkill)</li>
+</ul>
+<hr>
+<h2 id="42-langgraph-the-5-core-concepts"><a class="anchor" href="#42-langgraph-the-5-core-concepts" aria-label="Link to section">#</a>4.2 LangGraph — The 5 Core Concepts</h2>
+<h3 id="concept-1-state"><a class="anchor" href="#concept-1-state" aria-label="Link to section">#</a>Concept 1: State</h3>
+<p>Shared dict that flows through every node.</p>
+<pre><code class="language-python">from typing import TypedDict, Annotated
+from langgraph.graph.message import add_messages
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]  # auto-merged
+    documents: list[str]
+    next_step: str
+    quality_score: float
+</code></pre>
+<h3 id="concept-2-nodes"><a class="anchor" href="#concept-2-nodes" aria-label="Link to section">#</a>Concept 2: Nodes</h3>
+<p>Python functions that read state, do work, return updated state.</p>
+<pre><code class="language-python">def retrieve_documents(state: AgentState) -&gt; AgentState:
+    query = state[&quot;messages&quot;][-1].content
+    docs = retriever.get_relevant_documents(query)
+    state[&quot;documents&quot;] = docs
+    return state
+</code></pre>
+<h3 id="concept-3-edges"><a class="anchor" href="#concept-3-edges" aria-label="Link to section">#</a>Concept 3: Edges</h3>
+<p>Three types: normal, conditional, entry/finish.</p>
+<pre><code class="language-python">workflow.add_edge(&quot;node_a&quot;, &quot;node_b&quot;)  # always A → B
+
+def router(state: AgentState) -&gt; str:
+    if &quot;search&quot; in state[&quot;messages&quot;][-1].content.lower():
+        return &quot;search&quot;
+    return &quot;answer&quot;
+
+workflow.add_conditional_edges(
+    &quot;classify&quot;,    # source node
+    router,        # router function
+    {&quot;search&quot;: &quot;search_node&quot;, &quot;answer&quot;: &quot;answer_node&quot;}  # mapping
+)
+</code></pre>
+<h3 id="concept-4-cycles-the-killer-feature"><a class="anchor" href="#concept-4-cycles-the-killer-feature" aria-label="Link to section">#</a>Concept 4: Cycles (The Killer Feature)</h3>
+<pre><code class="language-python">def should_loop(state: AgentState) -&gt; str:
+    if state[&quot;quality_score&quot;] &lt; 0.8:
+        return &quot;improve_node&quot;  # loop back
+    return &quot;finalize_node&quot;
+
+workflow.add_conditional_edges(&quot;critique&quot;, should_loop)
+</code></pre>
+<h3 id="concept-5-persistence-checkpointer"><a class="anchor" href="#concept-5-persistence-checkpointer" aria-label="Link to section">#</a>Concept 5: Persistence (Checkpointer)</h3>
+<p>State survives server restarts. Resume from any checkpoint.</p>
+<pre><code class="language-python">from langgraph.checkpoint.postgres import PostgresSaver
+
+memory = PostgresSaver.from_conn_string(&quot;postgresql://...&quot;)
+app = workflow.compile(checkpointer=memory)
+
+# Use thread_id for conversation memory
+config = {&quot;configurable&quot;: {&quot;thread_id&quot;: &quot;user_123&quot;}}
+app.invoke(input_data, config)  # remembers previous state
+</code></pre>
+<h3 id="human-in-the-loop"><a class="anchor" href="#human-in-the-loop" aria-label="Link to section">#</a>Human-in-the-Loop</h3>
+<pre><code class="language-python">app = workflow.compile(
+    checkpointer=memory,
+    interrupt_before=[&quot;sensitive_action&quot;]  # PAUSE here
+)
+
+# First call: pauses before sensitive action
+app.invoke(input, config)
+
+# After human approval: resume
+app.invoke(None, config)  # continues from interrupt
+</code></pre>
+<h3 id="full-example-agentic-rag-with-langgraph"><a class="anchor" href="#full-example-agentic-rag-with-langgraph" aria-label="Link to section">#</a>Full Example: Agentic RAG with LangGraph</h3>
+<pre><code class="language-python">from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
+
+class State(TypedDict):
+    messages: list
+    documents: list
+
+# Define tools
+@tool
+def search_docs(query: str) -&gt; str:
+    &quot;&quot;&quot;Search internal documents.&quot;&quot;&quot;
+    return retriever.get_relevant_documents(query)
+
+tools = [search_docs]
+llm = ChatOpenAI(model=&quot;gpt-4o&quot;).bind_tools(tools)
+
+# Nodes
+def agent(state: State):
+    response = llm.invoke(state[&quot;messages&quot;])
+    return {&quot;messages&quot;: [response]}
+
+def should_continue(state: State):
+    last = state[&quot;messages&quot;][-1]
+    if last.tool_calls:
+        return &quot;tools&quot;
+    return END
+
+# Build graph
+workflow = StateGraph(State)
+workflow.add_node(&quot;agent&quot;, agent)
+workflow.add_node(&quot;tools&quot;, ToolNode(tools))
+workflow.add_edge(START, &quot;agent&quot;)
+workflow.add_conditional_edges(&quot;agent&quot;, should_continue)
+workflow.add_edge(&quot;tools&quot;, &quot;agent&quot;)
+
+# Compile with persistence
+memory = MemorySaver()
+app = workflow.compile(checkpointer=memory)
+
+# Run
+config = {&quot;configurable&quot;: {&quot;thread_id&quot;: &quot;user_123&quot;}}
+result = app.invoke({&quot;messages&quot;: [(&quot;user&quot;, &quot;What&#39;s our return policy?&quot;)]}, config)
+</code></pre>
+<hr>
+<h2 id="43-the-3-langgraph-patterns"><a class="anchor" href="#43-the-3-langgraph-patterns" aria-label="Link to section">#</a>4.3 The 3 LangGraph Patterns</h2>
+<h3 id="pattern-1-routing-adaptive"><a class="anchor" href="#pattern-1-routing-adaptive" aria-label="Link to section">#</a>Pattern 1: Routing (Adaptive)</h3>
+<pre><code>classify → [vector_search | sql_search | web_search] → generate
+</code></pre>
+<h3 id="pattern-2-loop-with-validation"><a class="anchor" href="#pattern-2-loop-with-validation" aria-label="Link to section">#</a>Pattern 2: Loop with Validation</h3>
+<pre><code>generate → validate → if invalid: back to generate; else END
+</code></pre>
+<h3 id="pattern-3-multi-agent-supervisor"><a class="anchor" href="#pattern-3-multi-agent-supervisor" aria-label="Link to section">#</a>Pattern 3: Multi-Agent (Supervisor)</h3>
+<pre><code>supervisor → [agent_a | agent_b | agent_c] → supervisor (decides next) → END
+</code></pre>
+<hr>
+<h2 id="44-interview-answer-template"><a class="anchor" href="#44-interview-answer-template" aria-label="Link to section">#</a>4.4 Interview Answer Template</h2>
+<blockquote>
+<p>&quot;LangGraph is <strong>stateful orchestration with cycles and persistence</strong> — unlike LangChain Chains which are DAGs and AgentExecutor which is monolithic. The 5 concepts are state (shared dict), nodes (Python functions), edges (transitions), cycles (loops back), and persistence (checkpointer survives restarts). I use it for: routing (Adaptive RAG), validation loops (self-critique), multi-agent systems (supervisor + workers), and human-in-the-loop (interrupt_before for sensitive actions). Compared to a plain agent, LangGraph gives me visibility into every state transition and the ability to resume mid-workflow.&quot;</p>
+</blockquote>
+<hr>

@@ -1,0 +1,31 @@
+{
+  "name": "genai-interview-handbook",
+  "version": "1.0.0",
+  "description": "The Complete GenAI & AI Engineering Interview Handbook — a futuristic, open study site covering fundamentals to production for any AI/GenAI engineering interview.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node serve.mjs",
+    "dev": "npm run build && node serve.mjs"
+  },
+  "keywords": [
+    "genai",
+    "llm",
+    "rag",
+    "ai-engineering",
+    "interview",
+    "interview-questions",
+    "machine-learning",
+    "langchain",
+    "langgraph",
+    "transformers",
+    "prompt-engineering",
+    "agents",
+    "vector-database"
+  ],
+  "author": "wowgeekyboy",
+  "license": "MIT",
+  "dependencies": {
+    "marked": "^12.0.2"
+  }
+}
